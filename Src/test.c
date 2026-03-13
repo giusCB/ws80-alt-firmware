@@ -7,7 +7,7 @@
 
 void Test()
 {
-    configure_radio(true, 3);
+    init_radio();//(true, 3);
     //g_canStop = false;
     while (1)
     {
@@ -24,7 +24,7 @@ void Test()
         if (processed)
         {
             printWindDebug();
-            wait_for_continue();
+            //wait_for_continue();
         }
 
         processRadio();

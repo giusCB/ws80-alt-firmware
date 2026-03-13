@@ -251,8 +251,8 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps)
 
 void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount)
 {
-    uint32_t sum_x = 0;
-    uint32_t sum_y = 0;
+    int32_t sum_x = 0;
+    int32_t sum_y = 0;
     uint8_t end = s_sample_write_idx + 1 + sampleCount;
     for (uint8_t i = s_sample_write_idx + 1; i < end; i++)
     {
@@ -271,8 +271,8 @@ uint16_t get_gust()
     for (uint8_t i = start; i != s_sample_write_idx; 
         i = i == 0 ? SAMPLE_BUFFER_SIZE - 1 : i - 1)
     {
-        uint16_t x = s_samples[i][0];
-        uint16_t y = s_samples[i][1];
+        int16_t x = s_samples[i][0];
+        int16_t y = s_samples[i][1];
         uint32_t mag = sqrt(x * x + y * y); // Consider if we can remove this sqrt.
         // 4 sample exponential moving average
         cur = cur * 3 / 4 + mag;
@@ -294,4 +294,6 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     if (angle_deg < 0)
         angle_deg += 360;
     *pAngle_deg = angle_deg;
+    WIND_PRINT("Wind parameters. Dir: %d, Avg: %d, gust: %d",
+        *pAngle_deg, *pAvg_dmps, *pGust_dmps);
 }

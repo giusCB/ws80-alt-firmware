@@ -1,6 +1,7 @@
 #include "cmt_spi3.h"
 #include "gpio_defs.h"
 //#include "common.h"
+#include "stm32l1xx_hal_gpio.h"
 
 /* ************************************************************************
 *  The following need to be modified by user
@@ -27,14 +28,36 @@
     
 void cmt_spi3_delay(void)
 {
-    u32 n = 7;
-    while(n--);
+    // push, pop, call, and return will all consume additional cycles.
+    uint32_t entryTicks = SysTick->VAL; // 1 cycle
+    uint32_t st_load = SysTick->LOAD; // 1 cycle
+    entryTicks += st_load; // 1 cycle
+    uint32_t diff;
+    do
+    {
+        diff = (entryTicks - SysTick->VAL) % st_load; // 3 cycles
+    } while (diff < 16); // 2 cycles
+    // BS 2026: WTF is this? Any half decent compiler will optimise this to nothing.
+    // Where are some comments describing how long this is supposed to delay,
+    // so that I can write a reasonable replacement?
+    //u32 n = 7;
+    //while(n--);
 }
 
 void cmt_spi3_delay_us(void)
 {
-    u16 n = 8;
-    while(n--);
+    // Yeah, yeah, this is real naive,
+    // but if we run our SPI a little slow it'll still work fine.
+    uint32_t entryTicks = SysTick->VAL; // 1 cycle
+    uint32_t st_load = SysTick->LOAD; // 1 cycle
+    entryTicks += st_load; // 1 cycle
+    uint32_t diff;
+    do
+    {
+        diff = (entryTicks - SysTick->VAL) % st_load; // 3 cycles
+    } while (diff < 32); // 2 cycles
+    //u16 n = 8;
+    //while(n--);
 }
 
 void cmt_spi3_init(void)

@@ -13,8 +13,6 @@
 #include "debug.h"
 #include "main.h"
 
-#define RADIO_PRINT(...) do { debug_print(__VA_ARGS__); } while (0)
-
 uint8_t g_frequencySelector;
 volatile bool s_txDone;
 
@@ -117,7 +115,7 @@ void radio_transmit(void* data, uint8_t len)
             RADIO_PRINT("Radio TX TIMEOUT!");
             break;
         }
-        stop_until_event(true);
+        __WFE();
     }
     if (s_txDone)
     {

@@ -2,6 +2,13 @@
 #include "gpio_defs.h"
 //#include "common.h"
 #include "stm32l1xx_hal_gpio.h"
+#include "debug.h"
+
+#ifdef DEBUG_SPI
+#define SPI_PRINT(...) debug_print(__VA_ARGS__)
+#else
+#define SPI_PRINT(...) do {} while (0)
+#endif
 
 /* ************************************************************************
 *  The following need to be modified by user
@@ -10,7 +17,7 @@
 #define cmt_spi3_fcsb_out()     SET_GPIO_OUT(CMT_FCSB_GPIO)
 #define cmt_spi3_sclk_out()     SET_GPIO_OUT(CMT_SCLK_GPIO)
 #define cmt_spi3_sdio_out()     SET_GPIO_OUT(CMT_SDIO_GPIO)
-#define cmt_spi3_sdio_in()      SET_GPIO_IN(CMT_SDIO_GPIO)
+#define cmt_spi3_sdio_in()      SET_GPIO_IN_PU(CMT_SDIO_GPIO)
 
 #define cmt_spi3_csb_1()        SET_GPIO_H(CMT_CSB_GPIO)
 #define cmt_spi3_csb_0()        SET_GPIO_L(CMT_CSB_GPIO)
@@ -85,6 +92,8 @@ void cmt_spi3_send(u8 data8)
 {
     u8 i;
 
+    SPI_PRINT("S: %02x, MODER: %08lx, PUPDR: %08lx, ODR: %08lx\r\n",
+        data8, GPIOC->MODER, GPIOC->PUPDR, GPIOC->ODR);
     for(i=0; i<8; i++)
     {
         cmt_spi3_sclk_0();
@@ -105,6 +114,8 @@ void cmt_spi3_send(u8 data8)
 
 u8 cmt_spi3_recv(void)
 {
+    SPI_PRINT("R: MODER: %08lx, PUPDR: %08lx, ODR: %08lx\r\n",
+        GPIOC->MODER, GPIOC->PUPDR, GPIOC->ODR);
     u8 i;
     u8 data8 = 0xFF;
 
@@ -130,17 +141,21 @@ u8 cmt_spi3_recv(void)
 
 void cmt_spi3_write(u8 addr, u8 dat)
 {
+    // sdio: C8
     cmt_spi3_sdio_1();
     cmt_spi3_sdio_out();
 
+    // sclk: C9
     cmt_spi3_sclk_0();
     cmt_spi3_sclk_out();
     cmt_spi3_sclk_0(); 
 
+    // fcsb: C7
     cmt_spi3_fcsb_1();
     cmt_spi3_fcsb_out();
     cmt_spi3_fcsb_1();
 
+    // csb: C6
     cmt_spi3_csb_0();
 
     /* > 0.5 SCLK cycle */

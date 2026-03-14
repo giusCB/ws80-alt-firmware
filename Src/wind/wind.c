@@ -84,11 +84,11 @@ void printWindDebug()
 {
     print_wind_phys_debug();
     print_wind_calc_debug();
-    debug_print("Measurement: \r\n");
+    WIND_PRINT("Measurement: \r\n");
     for (int i = 0; i < 5; i++)
     {
         int idx = i * 30;
-        debug_print(" %4d, %4d, %4d, %4d, %4d\r\n", 
+        WIND_PRINT(" %4d, %4d, %4d, %4d, %4d\r\n", 
             g_wind_measurement[idx + 0], g_wind_measurement[idx + 1], g_wind_measurement[idx + 2], g_wind_measurement[idx + 3],
             g_wind_measurement[idx + 4]);
     }

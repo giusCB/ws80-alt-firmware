@@ -16,7 +16,7 @@
 
 extern RTC_HandleTypeDef hrtc;
 
-uint32_t g_rtcTicks = 0;
+volatile uint32_t g_rtcTicks = 0;
 #ifdef DEBUG
 volatile bool g_canStop = false;
 #else
@@ -230,7 +230,8 @@ void wait_until_alarm_stopped()
         }
         if (g_rtcTicks - entry_ticks >= 2)
         {
-            debug_print("Timed out on alarm!");
+            debug_print("Timed out on alarm! alarmEntrySubseconds: %d, alarmMillisFromNow: %d, SSR: %ld\r\n",
+                alarmEntrySubSeconds, alarmMillisFromNow, get_SSR());
                 /*\r\n Entry millis: %lu, Alarm millis: %lu, Current millis: %lu\r\n",
                 entry_millis, s_alarmMillis, millis32());
             debug_print("Time at setalarm seconds: %d subseconds: %lu\r\n", alarmEntryTime.Seconds, alarmEntryTime.SubSeconds);

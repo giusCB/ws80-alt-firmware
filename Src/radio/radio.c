@@ -13,6 +13,14 @@
 #include "debug.h"
 #include "main.h"
 
+inline BOOL radio_check(BOOL result, const char* msg) 
+{
+    if (!result)
+        RADIO_PRINT(msg);
+    return result;
+}
+#define RADIO_CHECK(A) radio_check(A, "FAILED " #A "\r\n")
+
 uint8_t g_frequencySelector;
 volatile bool s_txDone;
 
@@ -21,6 +29,13 @@ void radio_prepare_tx(void);
 void radio_TX_DONE_CLR(void);
 void radio_undocumented_CUS_CMT4_TX8_9(uint8_t idx);
 
+uint8_t readReg(uint8_t addr)
+{
+    uint8_t ret = CMT2300A_ReadReg(addr);
+    RADIO_PRINT("R %02x = %02x\r\n", addr, ret);
+    return ret;
+}
+
 void configure_radio(bool first_init,uint16_t frequency_selector)
 {
     uint8_t tmp;
@@ -28,12 +43,12 @@ void configure_radio(bool first_init,uint16_t frequency_selector)
   
     CMT2300A_SoftReset();
     delay_stopped(20);
-    CMT2300A_GoStby();
-  tmp = CMT2300A_ReadReg(0x61);
+    RADIO_CHECK(CMT2300A_GoStby());
+  tmp = readReg(0x61);
   // CUS _MODE_STA, CFG _ RETAIN: Protected data in 0x00 - 0x5F during soft reset
   CMT2300A_WriteReg(0x61,(tmp & 0xdf) | 0x10);
   // CUS _ EN _ CTL, UNLOCK_STOP_EN: Stop the chip from trying to TX when PLL won't lock
-  tmp = CMT2300A_ReadReg(0x62);
+  tmp = readReg(0x62);
   CMT2300A_WriteReg(0x62,tmp | 0x20);
   CMT2300A_EnableLfosc(false);
   CMT2300A_ClearInterruptFlags();
@@ -42,7 +57,7 @@ void configure_radio(bool first_init,uint16_t frequency_selector)
   }
   if (frequency_selector != 0) {
     for (i = 0; i < 8; i = i + 1) {
-      CMT2300A_WriteReg(i + 0x18,radio_config[frequency_selector * 8 + i + 88]);
+      CMT2300A_WriteReg(i + 0x18, radio_freq_config[(frequency_selector - 1) * 8 + i]);
     }
   }
                     /* This changes a bunch of undocumented registers */
@@ -81,7 +96,7 @@ void configure_radio(bool first_init,uint16_t frequency_selector)
     }
   }
                     /* undocumented */
-  tmp = CMT2300A_ReadReg(9);
+  tmp = readReg(9);
   CMT2300A_WriteReg(9,(tmp & 0xf8) | 2);
   radio_configure_payload();
   return;
@@ -96,15 +111,30 @@ void radio_configure_payload(void)
                     /* missing parameter 0x12 */
   CMT2300A_SetFifoThreshold(0x12);
   CMT2300A_SetPayloadLength(0x12);
-  CMT2300A_GoSleep();
+  RADIO_CHECK(CMT2300A_GoSleep());
+}
+
+void test_radio()
+{
+    radio_prepare_tx();
+    radio_undocumented_CUS_CMT4_TX8_9(0x14);
+    uint32_t entryTicks = g_rtcTicks;
+    CMT2300A_GoTx();
+    while (g_rtcTicks - entryTicks < 4)
+    {}
+    CMT2300A_ClearInterruptFlags();
+    CMT2300A_GoSleep();
+    while (g_rtcTicks - entryTicks < 8)
+    {}
 }
 
 void radio_transmit(void* data, uint8_t len)
 {
+    //test_radio();
     radio_prepare_tx();
     radio_undocumented_CUS_CMT4_TX8_9(25);
     s_txDone = false;
-    CMT2300A_GoTx();
+    RADIO_CHECK(CMT2300A_GoTx());
     CMT2300A_WriteFifo(data, len);
     uint32_t entryMillis = millis32();
     const uint32_t timeout = 32;
@@ -112,19 +142,20 @@ void radio_transmit(void* data, uint8_t len)
     {
         if (millis32() - entryMillis > timeout)
         {
-            RADIO_PRINT("Radio TX TIMEOUT!");
+            RADIO_PRINT("Radio TX TIMEOUT!\r\n");
             break;
         }
         __WFE();
     }
+    RADIO_PRINT("Time to transmit: %ld\r\n", millis32() - entryMillis);
     if (s_txDone)
     {
         radio_TX_DONE_CLR();
-        CMT2300A_GoSleep();
+        RADIO_CHECK(CMT2300A_GoSleep());
     }
     else
         configure_radio(false, g_frequencySelector);
-    RADIO_PRINT("Radio Tx Done");
+    RADIO_PRINT("Radio Tx Done\r\n");
 }
 
 void EXTI15_10_IRQHandler(void)
@@ -135,7 +166,7 @@ void EXTI15_10_IRQHandler(void)
 
 void radio_prepare_tx(void)
 {
-  CMT2300A_GoStby();
+  RADIO_CHECK(CMT2300A_GoStby());
   CMT2300A_EnableWriteFifo();
   CMT2300A_ClearTxFifo();
                     /* Int1 = 7: CMT2300A_INT_SEL_PKT_OK
@@ -243,14 +274,14 @@ uint8_t set_radio_state(radio_state_cmd new_state_flag)
                        0x6a: CUST_INT_CLR1
                        Bit 3: TX_DONE_FLG */
     if ((new_state_flag == go_tx) &&
-       (bVar1 = CMT2300A_ReadReg(0x6a), (int)((uint16_t)bVar1 * 0x10000000) < 0)) {
+       (bVar1 = readReg(0x6a), (int)((uint16_t)bVar1 * 0x10000000) < 0)) {
       return 1;
     }
                     /* new_state_flag 8 => go_rx
                        If we're NOT going into RX, loop.
                        If we're going into RX, loop if not PKT_OK_FLAG */
   } while ((new_state_flag != go_rx) ||
-          (bVar1 = CMT2300A_ReadReg(0x6d), (bVar1 & 1) == 0
+          (bVar1 = readReg(0x6d), (bVar1 & 1) == 0
                     /* if state != 5, then we can accept a different result too
                        0x6d, CUS_INT_FLAG
                        Bit 0: PKT_OK_FLG */));

@@ -13,7 +13,7 @@ extern volatile bool g_binaryDebug;
 extern volatile bool g_continueFlag;
 extern volatile bool g_runFlag;
 
-void debug_print(char* format, ...);
+void debug_print(const char *const format, ...);
 void debug_print2(char* format, ...);
 void wait_for_continue();
 

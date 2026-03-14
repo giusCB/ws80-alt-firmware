@@ -2,7 +2,8 @@
 #include "gpio_defs.h"
 #include "stm32l1xx_hal_gpio.h"
 
-void GPIO_Pin_Setting(GPIO_TypeDef *gpio, uint16_t nPin, uint32_t speed, uint32_t mode)
+void GPIO_Pin_Setting(GPIO_TypeDef *gpio, uint16_t nPin, 
+    uint32_t speed, uint32_t mode, uint32_t pull)
 {
 #if 1
     GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -10,6 +11,7 @@ void GPIO_Pin_Setting(GPIO_TypeDef *gpio, uint16_t nPin, uint32_t speed, uint32_
     GPIO_InitStructure.Pin = nPin;
     GPIO_InitStructure.Speed = speed;
     GPIO_InitStructure.Mode = mode;
+    GPIO_InitStructure.Pull = pull;
     HAL_GPIO_Init(gpio, &GPIO_InitStructure);
 #else
     u16 i;

@@ -12,7 +12,7 @@
 
 #define WIND_SAMPLE_SIZE 900
 
-#define DEBUG_WIND
+//#define DEBUG_WIND
 #ifdef DEBUG_WIND
 #define WIND_PRINT(...) do { debug_print(__VA_ARGS__); } while (0)
 #else

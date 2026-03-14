@@ -548,7 +548,8 @@ static void MX_GPIO_Init(void)
                           |ult1_dr1_Pin|ult1_dr2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, radio_fifo_Pin|radio_reg_Pin|radio_clk_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, radio_clk_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, radio_fifo_Pin|radio_reg_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : LED_Pin Ult0_dr1_Pin Batt_sw_Pin Analog_Pwr_Pin
                            analog_mux1_Pin analog_mux2_Pin Ult0_dr2_Pin */
@@ -583,7 +584,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : radio_data_Pin */
   GPIO_InitStruct.Pin = radio_data_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(radio_data_GPIO_Port, &GPIO_InitStruct);
 

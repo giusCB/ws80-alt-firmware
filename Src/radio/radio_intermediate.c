@@ -10,13 +10,13 @@
 
 const uint8_t radio_tx_interval = (uint8_t)(RADIO_TX_PERIOD * WAKEUP_FREQUENCY);
 
-uint32_t last_tx;
+uint32_t last_tx = 0;
 uint32_t radio_id;
 //TODO: All of these
-int16_t light; 
-uint8_t battery;
-uint8_t pressure;
-uint8_t uvIndex_x10;
+int16_t light = 0; 
+uint8_t battery = 0;
+uint8_t pressure = 0;
+uint8_t uvIndex_x10 = 0;
 
 
 struct radioPacket
@@ -54,6 +54,8 @@ void init_radio()
     LoadRadioId();
     LoadFrequencySelector();
     configure_radio(true, g_frequencySelector);
+    test_radio();
+    configure_radio(false, g_frequencySelector);
 }
 
 void LoadFrequencySelector()
@@ -126,7 +128,9 @@ bool LoadRadioIdFromEEPROM()
 {
     uint16_t id[2];
     read_EEPROM_skipping(ID_ADDRESS, &id, 2);
-    if (id[1] != 'Z')
+    RADIO_PRINT("EEPROM ID Data: %04x %04x\r\n", 
+        id[0], id[1]);
+    if (((uint8_t*)id)[1] != 'Z')
         return false;
     radio_id = ((uint32_t)id[0] & 0xFF)  << 16 | id[1];
     return true;
@@ -153,8 +157,8 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
     int16_t tempPlus400 = lastTempMeasurement + 400;
 
     packet->b1 = 0x80;
-    memcpy(&radio_id, packet->id, 3);
-    packet->light_hi = ((uint16_t)light) >> 8;
+    memcpy(packet->id, &radio_id, 3);
+    packet->light_hi = light >> 8;
     packet->light_lo = light & 0xFF;
     packet->battery = battery;
     packet->hiBits =
@@ -173,8 +177,13 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
     packet->uv_index_x10 = uvIndex_x10;
     packet->pressureAndStatus = 0;
     packet->pressure = 0;
-    packet->crc1 = crc8_dallas(packet, sizeof(packet) - 2, 0x00);
-    packet->chkSum = checksum(packet, sizeof(packet) - 1);
+    packet->crc1 = crc8_dallas(packet, sizeof(RadioPacketTypedef) - 2, 0x00);
+    packet->chkSum = checksum(packet, sizeof(RadioPacketTypedef) - 1);
+    RADIO_PRINT("Packet Contents: (%d)\r\n", sizeof(RadioPacketTypedef));
+    uint8_t* p = (uint8_t*)packet;
+    for (int i = 0; i < sizeof(RadioPacketTypedef); i++)
+        RADIO_PRINT("%02x ", p[i]);
+    RADIO_PRINT("\r\n");
 }
 
 bool processRadio()

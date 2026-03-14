@@ -27,7 +27,8 @@ void Test()
             //wait_for_continue();
         }
 
-        processRadio();
+        if (processRadio())
+            wait_for_continue();
 
         delay_stopped(100);
     }

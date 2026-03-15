@@ -3,6 +3,8 @@
 #include "temperature.h"
 #include "my_time.h"
 #include "crc.h"
+#include "light.h"
+#include "battery.h"
 #include <stdbool.h>
 #include <string.h>
 
@@ -12,11 +14,7 @@ const uint8_t radio_tx_interval = (uint8_t)(RADIO_TX_PERIOD * WAKEUP_FREQUENCY);
 
 uint32_t last_tx = 0;
 uint32_t radio_id;
-//TODO: All of these
-int16_t light = 0; 
-uint8_t battery = 0;
 uint8_t pressure = 0;
-uint8_t uvIndex_x10 = 0;
 
 
 struct radioPacket
@@ -154,13 +152,13 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
 {
     uint16_t avg_dmps, gust_dmps, angle_deg;
     get_wind_parameters(&avg_dmps, &gust_dmps, &angle_deg);
-    int16_t tempPlus400 = lastTempMeasurement + 400;
+    int16_t tempPlus400 = g_tempMeasurement + 400;
 
     packet->b1 = 0x80;
     memcpy(packet->id, &radio_id, 3);
-    packet->light_hi = light >> 8;
-    packet->light_lo = light & 0xFF;
-    packet->battery = battery;
+    packet->light_hi = lightMeasurement >> 8;
+    packet->light_lo = lightMeasurement & 0xFF;
+    packet->battery = g_batteryMeasurement;
     packet->hiBits =
         // We're not going to report minVoltage.
         // They're in bit 7 and bit 3.
@@ -170,11 +168,11 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
         ((avg_dmps & 0x100) >> 4) |
         ((tempPlus400 & 0x700) >> 8);
     packet->temp_lo = tempPlus400 & 0xFF;
-    packet->humidity = lastHumidityMeasurement & 0xFF;
+    packet->humidity = g_humidityMeasurement & 0xFF;
     packet->wind_avg_lo = avg_dmps & 0xFF;
     packet->wind_dir_lo = angle_deg & 0xFF;
     packet->wind_max_lo = gust_dmps & 0xFF;
-    packet->uv_index_x10 = uvIndex_x10;
+    packet->uv_index_x10 = uvMeasurement;
     packet->pressureAndStatus = 0;
     packet->pressure = 0;
     packet->crc1 = crc8_dallas(packet, sizeof(RadioPacketTypedef) - 2, 0x00);
@@ -189,7 +187,7 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
 bool processRadio()
 {
     uint32_t localTicks = g_rtcTicks;
-    if (localTicks - last_tx > radio_tx_interval)
+    if (localTicks - last_tx >= radio_tx_interval)
     {
         last_tx = g_rtcTicks;
         RadioPacketTypedef radioPacket;

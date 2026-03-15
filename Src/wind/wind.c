@@ -20,10 +20,9 @@ volatile uint16_t* g_wind_measurement; //[WIND_SAMPLE_SIZE];
 uint32_t g_signalPowers[6][2];
 uint8_t g_windRingCounts[6];
 
-static uint32_t s_last_wind_sample;
+static uint32_t s_last_wind_sample = 0xFFFF;;
 
 uint8_t wind_sample_frequency = 2;
-
 const uint8_t max_volume = 12;
 
 void sample_wind();
@@ -37,8 +36,13 @@ bool process_wind()
     #endif
     uint32_t rtcTicksLocal = g_rtcTicks;
     uint8_t wind_sample_interval = WAKEUP_FREQUENCY / wind_sample_frequency;
-    if (rtcTicksLocal - s_last_wind_sample > wind_sample_interval)
+    if (rtcTicksLocal - s_last_wind_sample >= wind_sample_interval)
     {
+        if (g_wind_init_required)
+        {
+            WIND_PRINT("Reinitialising wind.");
+            InitScope();
+        }
         WIND_PRINT("Sampling Wind!\r\n");
         s_last_wind_sample = rtcTicksLocal;
         sample_wind();

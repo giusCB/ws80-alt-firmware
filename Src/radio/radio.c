@@ -124,8 +124,6 @@ void test_radio()
     {}
     CMT2300A_ClearInterruptFlags();
     CMT2300A_GoSleep();
-    while (g_rtcTicks - entryTicks < 8)
-    {}
 }
 
 void radio_transmit(void* data, uint8_t len)
@@ -145,7 +143,7 @@ void radio_transmit(void* data, uint8_t len)
             RADIO_PRINT("Radio TX TIMEOUT!\r\n");
             break;
         }
-        __WFE();
+        stop_until_event(true);
     }
     RADIO_PRINT("Time to transmit: %ld\r\n", millis32() - entryMillis);
     if (s_txDone)

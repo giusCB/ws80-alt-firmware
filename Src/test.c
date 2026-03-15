@@ -4,10 +4,12 @@
 #include "temperature.h"
 #include "wind.h"
 #include "radio.h"
+#include "light.h"
+#include "battery.h"
 
 void Test()
 {
-    init_radio();//(true, 3);
+    //init_radio();//(true, 3);
     //g_canStop = false;
     while (1)
     {
@@ -16,6 +18,19 @@ void Test()
         //debug_print("Time time is: %lu, %ld, %lu\r\n", millis32(), HAL_GetTick(), g_rtcTicks);
 
         //debug_print("I'm going to Alarm delay now.\r\n");
+        wait_for_continue();
+        debug_print("\r\n ----- Battery ----\r\n");
+        if (!processBattery())
+        {
+            debug_print("Manual battery measurement\r\n");
+            measureBattery();
+        }
+        debug_print("\r\n ----- Light ------\r\n");
+        processLight();
+        readPossibleLightInterface();
+        debug_print("\r\n ------Temp -------\r\n");
+        ProcessTemperature();
+        continue;
 
         bool processed = process_wind();
         // ProcessTemperature();

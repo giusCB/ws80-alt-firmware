@@ -27,11 +27,12 @@
 enum TempSensorEnum { TS_Missing, SHT3x, SHT4x, HTU21C };
 enum TempSensorEnum tempSensorType;
 
-const uint16_t tempMeasurementInterval = 10000;
-const uint16_t tempSensorDelay = 100;
-uint32_t lastTempMeasurementTicks = 0;
-int16_t lastTempMeasurement = 0;
-uint16_t lastHumidityMeasurement = 0;
+const uint8_t tempMeasurementInterval_s = 10;
+const uint8_t tempMeasurementInterval_rtc = tempMeasurementInterval_s * WAKEUP_FREQUENCY;
+const uint16_t tempSensorDelay = 1;
+uint32_t lastTempMeasurementTicks = 0xFFFF;
+int16_t g_tempMeasurement = 0;
+uint16_t g_humidityMeasurement = 0;
 enum TempSensorState { TS_Idle, TS_Acquiring };
 enum TempSensorState tempSensorState = TS_Idle;
 
@@ -94,11 +95,11 @@ void InitTemperature()
 
 void ProcessTemperature()
 {
-    uint32_t ticks = millis32();
+    uint32_t ticks = g_rtcTicks;
     switch (tempSensorState)
     {
         case TS_Idle:
-            if (ticks - lastTempMeasurementTicks > tempMeasurementInterval)
+            if (ticks - lastTempMeasurementTicks > tempMeasurementInterval_rtc)
             {
                 if (!WakeUpTempSensor())
                 {
@@ -113,7 +114,7 @@ void ProcessTemperature()
         case TS_Acquiring:
             if (ticks - lastTempMeasurementTicks > tempSensorDelay)
             {
-                if (!GetTemperature(&lastTempMeasurement, &lastHumidityMeasurement))
+                if (!GetTemperature(&g_tempMeasurement, &g_humidityMeasurement))
                 {
                     #ifdef DEBUG_TEMP
                     debug_print("Failed to get temperature.\r\n");
@@ -149,13 +150,13 @@ bool GetTemperature(int16_t *temperature, uint16_t *humidity)
     }
     if (tempSensorType == HTU21C)
     {
-        address = 128; // 0x80
+        address = 0x80; // 0x80
         tempMultiplier = 1757;
         tempOffset = 68;
     }
     else
     {
-        address = 136; // 0x88
+        address = 0x88; // 0x88
         if (tempSensorType == 1)
         {
             humidityFactor = 100;

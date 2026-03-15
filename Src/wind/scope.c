@@ -38,6 +38,7 @@ uint32_t togglePin1, togglePin2;
 uint32_t togglePins;
 uint8_t tim9Cycles = 4;
 const uint8_t maxTim7Cycles = 8;
+bool g_wind_init_required = true;
 
 GPIO_TypeDef* channelGPIOs[] = { GPIOB, GPIOB,GPIOA, GPIOB };
 uint8_t channelPins[4][2] = {
@@ -221,6 +222,7 @@ void InitScope()
     InitGPIO();
     InitTimers();
     UpdateScopeOutChannel();
+    g_wind_init_required = false;
 }
 
 static bool IsSampleComplete()

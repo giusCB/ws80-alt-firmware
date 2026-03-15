@@ -8,11 +8,11 @@
 #pragma once
 #include "stm32l1xx.h"
 
-//#define DEBUG_TEMP
+#define DEBUG_TEMP
 
 void InitTemperature();
 void ProcessTemperature();
 
-extern int16_t lastTempMeasurement;
-extern uint16_t lastHumidityMeasurement;
+extern int16_t g_tempMeasurement;
+extern uint16_t g_humidityMeasurement;
 

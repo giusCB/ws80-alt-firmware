@@ -31,6 +31,7 @@ extern const uint8_t g_channel_transducers[6][2];
 extern volatile uint16_t* g_wind_measurement;
 extern uint8_t g_windRingCounts[6];
 extern uint32_t g_signalPowers[6][2];
+extern bool g_wind_init_required;
 
 bool process_wind();
 void initWind();

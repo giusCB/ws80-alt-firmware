@@ -14,6 +14,7 @@ void ProcessScope(uint8_t channel, uint8_t direction);
 void InitScope();
 void print_wind_phys_debug();
 void adjustRingCounts();
+void scopePrintTimes();
 
 #define DELAYED_ADC
 #ifdef DELAYED_ADC

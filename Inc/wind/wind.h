@@ -12,11 +12,16 @@
 
 #define WIND_SAMPLE_SIZE 900
 
-//#define DEBUG_WIND
 #ifdef DEBUG_WIND
 #define WIND_PRINT(...) do { debug_print(__VA_ARGS__); } while (0)
 #else
 #define WIND_PRINT(...) do {} while (0)
+#endif
+
+#ifdef DEBUG_WIND_TIME
+#define WIND_TIME_PRINT(...) debug_print(__VA_ARGS__)
+#else
+#define WIND_TIME_PRINT(...) do {} while(0)
 #endif
 
 enum transducer_enum

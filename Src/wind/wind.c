@@ -62,26 +62,56 @@ const uint8_t g_channel_transducers[6][2] =
 
 void sample_wind()
 {
+    #ifdef DEBUG_WIND_TIME
+    timeMeasurementTypdef entryMeas = measureTime();
+    timeDifferenceTypedef measurementTime = {0};
+    timeDifferenceTypedef processTime = {0};
+    #endif
     for (uint8_t dir = 0; dir < 2; dir++)
     {
         for (uint8_t chan = 0; chan < 6; chan++)
         {
+            timeMeasurementTypdef preScope = measureTime();
             ProcessScope(chan, dir);
-            /*prepareToMeasureWind(chan, dir);
-            measureWind();
-            doneMeasureWind();*/
+            timeMeasurementTypdef between = measureTime();
             processWindWaveform(chan, dir);
+            timeMeasurementTypdef afterProcess = measureTime();
+            #ifdef DEBUG_WIND_TIME
+            measurementTime = addDiffs(measurementTime, subtractTimes(between, preScope));
+            processTime = addDiffs(processTime, subtractTimes(afterProcess, between));
+            #endif
+
             // We need to wait for the transducers to ring down between measurements.
             // Original firmware used 8ms delay, but my testing suggests 4ms is fine.
             // We have an additional 2ms delay while we wait for the analog circuitry to stabilise.
             delay_stopped(3);
         }
     }
+    #ifdef DEBUG_WIND_TIME
+    timeMeasurementTypdef exitMeas = measureTime();
+    WIND_TIME_PRINT("measurement:   ");
+    printMeasurementDifference(measurementTime);
+    WIND_TIME_PRINT("process:       ");
+    printMeasurementDifference(processTime);
+    WIND_TIME_PRINT("physical wind: ");
+    printMeasurementDifference(subtractTimes(exitMeas, entryMeas));
+    // The individual measurements give 182 + 253 = 435k cycles
+    // The overall measurement gives 576k cycles.
+    // Where are the missing 135k cycles?
+    entryMeas = measureTime();
+    #endif
+
     //updatePhysicalParamters();
     int16_t x_cmps, y_cmps;
     calculate_wind(&x_cmps, &y_cmps);
     store_wind_sample(x_cmps, y_cmps);
     adjustRingCounts();
+
+    #ifdef DEBUG_WIND_TIME
+    exitMeas = measureTime();
+    WIND_TIME_PRINT("calc wind:     ");
+    printMeasurementDifference(subtractTimes(exitMeas, entryMeas));
+    #endif
 }
 
 void printWindDebug()

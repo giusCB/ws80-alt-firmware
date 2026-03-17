@@ -54,7 +54,7 @@ void measureBattery()
     ADC1->CR2 |= ADC_CR2_ADON;
     // Wait for the ADC to turn on and the regular channel to become ready:
     uint32_t entryTicks = HAL_GetTick();
-    while (ADC1->SR & (ADC_SR_ADONS | ADC_SR_RCNR) != (ADC_SR_ADONS | ADC_SR_RCNR))
+    while ((ADC1->SR & (ADC_SR_ADONS | ADC_SR_RCNR)) != (ADC_SR_ADONS | ADC_SR_RCNR))
     {
         if (HAL_GetTick() - entryTicks > batt_timeout)
         {

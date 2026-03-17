@@ -7,17 +7,39 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "debug.h"
 
 #define WAKEUP_FREQUENCY 4
 #define RTC_FREQ 32768
 
+#ifdef DEBUG
+struct timeMeasurement
+{
+    uint32_t millis1024, ticks, systick, timeAsleep
+} typedef timeMeasurementTypdef;
+struct timeDifference
+{
+    uint32_t millis, cycles, timeAsleep
+} typedef timeDifferenceTypedef;
+void timePrintDebug();
+timeMeasurementTypdef measureTime();
+timeDifferenceTypedef subtractTimes(timeMeasurementTypdef t1, timeMeasurementTypdef t2);
+timeDifferenceTypedef addDiffs(timeDifferenceTypedef t1, timeDifferenceTypedef t2);
+void printMeasurementDifference(timeDifferenceTypedef diff);
+#endif
+
 uint32_t millis32();
+uint16_t millis1024();
 void set_alarm(uint16_t millisFromNow);
 void wait_until_alarm_stopped();
 void delay_stopped(uint16_t delay);
 void stop_until_event(bool returnToHSE);
 void printMillisStatus();
 void delayMicros(uint16_t amt);
+void sleep();
 
 extern volatile uint32_t g_rtcTicks;
 extern volatile bool g_canStop;
+#ifdef DEBUG_TIME
+extern uint32_t time_asleep;
+#endif

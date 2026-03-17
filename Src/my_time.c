@@ -17,10 +17,25 @@
 extern RTC_HandleTypeDef hrtc;
 
 volatile uint32_t g_rtcTicks = 0;
+
 #ifdef DEBUG
 volatile bool g_canStop = false;
 #else
 volatile bool g_canStop = true;
+#endif
+
+#ifdef DEBUG_TIME
+bool hasSlept;
+uint32_t last_sleep;
+uint32_t time_asleep, last_time_asleep;
+uint32_t time_awake, last_time_awake;
+uint32_t sleep_count, last_sleep_count;
+uint32_t ticks_asleep;
+uint32_t longest_sleep;
+
+#define TIME_PRINT(...) debug_print(__VA_ARGS__)
+#else
+#define TIME_PRINT(...) do {} while (0)
 #endif
 
 RTC_TimeTypeDef secondRead;
@@ -39,6 +54,23 @@ void getDateAndTime(RTC_TimeTypeDef *pRtcTime,
 RTC_TimeTypeDef rtcTime;
 RTC_DateTypeDef rtcDate;
 uint32_t lastMillis;
+
+uint32_t alarmEntrySubSeconds;
+uint32_t alarmMillisFromNow;
+
+uint32_t get_SSR()
+{
+    bool match;
+    uint32_t read1;
+    do
+    {
+        read1 = RTC->SSR & 0xFFFF;
+        uint32_t read2 = RTC->SSR &0xFFFF;
+        match = read1 == read2;
+    } while (!match);
+    return read1;
+}
+
 // Technically not millis, since it's 1024 ticks per second not 1000.
 uint32_t millis32()
 {
@@ -65,44 +97,32 @@ uint32_t millis32()
     lastMillis = ret;
     if (ret < lastMillis)
     {
-        debug_print("Decreasing millis: %ld, %ld\r\n",
+        TIME_PRINT("Decreasing millis: %ld, %ld\r\n",
             lastMillis, ret);
         printMillisStatus();
     }
     return ret;
 }
 
+uint16_t millis1024()
+{
+    return 1024 - get_SSR();
+}
+
 void printMillisStatus()
 {
-    debug_print("rtcTime: %2ld:%2ld:%2ld.%4ld\r\n",
+    TIME_PRINT("rtcTime: %2ld:%2ld:%2ld.%4ld\r\n",
         rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds, 1024 - rtcTime.SubSeconds);
-    debug_print("second : %2ld:%2ld:%2ld.%4ld\r\n",
+    TIME_PRINT("second : %2ld:%2ld:%2ld.%4ld\r\n",
         secondRead.Hours, secondRead.Minutes, secondRead.Seconds, 1024 - secondRead.SubSeconds);
-    debug_print("RTC_CR: %08lx\r\n", RTC->CR);
+    TIME_PRINT("RTC_CR: %08lx\r\n", RTC->CR);
 }
 
-//static uint32_t s_alarmMillis;
 volatile bool s_alarmSignalled;
-RTC_AlarmTypeDef rtcAlarm;
-RTC_TimeTypeDef alarmEntryTime;
 
-uint32_t get_SSR()
-{
-    bool match;
-    uint32_t read1;
-    do
-    {
-        read1 = RTC->SSR & 0xFFFF;
-        uint32_t read2 = RTC->SSR &0xFFFF;
-        match = read1 == read2;
-    } while (!match);
-    return read1;
-}
-uint32_t alarmEntrySubSeconds;
-uint32_t alarmMillisFromNow;
+
 void set_alarm(uint16_t millisFromNow)
 {
-    #if 1
     alarmMillisFromNow = millisFromNow;
     alarmEntrySubSeconds = get_SSR();
     
@@ -124,7 +144,7 @@ void set_alarm(uint16_t millisFromNow)
     {
         if (HAL_GetTick() - entry_ticks > 10)
         {
-            debug_print("TIMED OUT Waiting for RTC_ISR_ALRAWF!");
+            TIME_PRINT("TIMED OUT Waiting for RTC_ISR_ALRAWF!");
             break;
         }
     }
@@ -137,35 +157,88 @@ void set_alarm(uint16_t millisFromNow)
     uint32_t exitSubSeconds = get_SSR();
     if ((alarmEntrySubSeconds - exitSubSeconds) % 1024 > millisFromNow)
     {
-        debug_print("Alarm: Exit without wait");
+        TIME_PRINT("Alarm: Exit without wait");
         s_alarmSignalled = true;
     }
-    /*debug_print("Alarm: EntrySSR: %ld, exitSSR: %ld, time: %d, alarmsubSeconds: %ld\r\n",
+    /*TIME_PRINT("Alarm: EntrySSR: %ld, exitSSR: %ld, time: %d, alarmsubSeconds: %ld\r\n",
         alarmEntrySubSeconds, exitSubSeconds, millisFromNow, alarmSubSeconds);
-    debug_print(" ALRMASSR %lx, CR: %08lx, ALRMAR: %08lx\r\n",
+    TIME_PRINT(" ALRMASSR %lx, CR: %08lx, ALRMAR: %08lx\r\n",
         RTC->ALRMASSR, RTC->CR, RTC->ALRMAR);*/
-    #else
-    RTC_DateTypeDef rtcDate;
-    HAL_RTC_GetTime(&hrtc, &alarmEntryTime, RTC_FORMAT_BIN);
-    HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
-    uint32_t curMillis = millis32();
-    s_alarmMillis = curMillis + millisFromNow;
-    uint32_t alarmSeconds = s_alarmMillis / 1024;
-    memset(&rtcAlarm, 0, sizeof(rtcAlarm));
+}
 
-    rtcAlarm.AlarmTime.Seconds = alarmSeconds % 60;
-    rtcAlarm.AlarmTime.SubSeconds = 1024 - s_alarmMillis % 1024;
-    rtcAlarm.AlarmMask = RTC_ALARMMASK_ALL & ~RTC_ALARMMASK_SECONDS;
-    rtcAlarm.AlarmSubSecondMask = RTC_ALARMSUBSECONDMASK_SS14_10;
-    rtcAlarm.Alarm = RTC_CR_ALRAE;
-    s_alarmSignalled = false;
-    HAL_RTC_SetAlarm_IT(&hrtc, &rtcAlarm, RTC_FORMAT_BIN);
-    #endif
+void timePrintDebug()
+{
+    uint32_t this_time_asleep = time_asleep - last_time_asleep;
+    uint32_t this_time_awake = time_awake - last_time_awake;
+    uint32_t this_sleep_count = sleep_count - last_sleep_count;
+    last_time_asleep = time_asleep;
+    last_time_awake = time_awake;
+    last_sleep_count = sleep_count;
+
+    static bool print = true;
+    if (print)
+    {
+        TIME_PRINT("Ticks: %7ld, Time asleep: %7ld, Time awake: %7ld, sleep count: %7ld, Ticks asleep: %7ld\r\n",
+            g_rtcTicks, time_asleep, time_awake, sleep_count, ticks_asleep);
+        TIME_PRINT("       %7ld,        This: %7ld,       This: %7ld,        This: %7ld, longest: %7ld\r\n",
+            4, this_time_asleep, this_time_awake, this_sleep_count, longest_sleep);
+    }
+    print = !print;
+    longest_sleep = 0;
+}
+
+timeMeasurementTypdef measureTime()
+{
+    timeMeasurementTypdef ret;
+    ret.millis1024 = millis1024();
+    ret.ticks = HAL_GetTick();
+    ret.systick = SysTick->VAL;
+    ret.timeAsleep = time_asleep;
+    return ret;
+}
+
+timeDifferenceTypedef subtractTimes(timeMeasurementTypdef t1, timeMeasurementTypdef t2)
+{
+    timeDifferenceTypedef ret;
+    ret.millis = (1024 + t1.millis1024 - t2.millis1024) % 1024;
+    
+    ret.cycles = (t1.ticks - t2.ticks) * SysTick->LOAD + t2.systick - t1.systick;
+    ret.timeAsleep = t1.timeAsleep - t2.timeAsleep;
+    return ret;
+}
+
+timeDifferenceTypedef addDiffs(timeDifferenceTypedef t1, timeDifferenceTypedef t2)
+{
+    timeDifferenceTypedef ret;
+    ret.millis = t1.millis + t2.millis;
+    ret.cycles = t1.cycles + t2.cycles;
+    ret.timeAsleep = t1.timeAsleep + t2.timeAsleep;
+    return ret;
+}
+
+void printMeasurementDifference(timeDifferenceTypedef diff)
+{
+    debug_print("millis = %ld cycles = %ld (%ld) sleep = %ld\r\n",
+        diff.millis, (diff.cycles / 32000), diff.cycles, diff.timeAsleep);
+}
+
+void sleep()
+{
+    CLEAR_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
+    __WFE();
+    SET_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
 }
 
 void stop_until_event(bool restoreClocks)
 {
-    
+    #ifdef DEBUG_TIME
+    uint32_t entryTime = millis1024();
+    if (hasSlept)
+        time_awake += entryTime - last_sleep;
+    sleep_count++;
+    uint32_t entryTicks = HAL_GetTick();
+    #endif
+
     uint32_t old_rcc_cfgr;
     if (restoreClocks)
         old_rcc_cfgr = RCC->CFGR;
@@ -173,10 +246,17 @@ void stop_until_event(bool restoreClocks)
     // I don't like the __SEV(); __WFE(); __WFE() present in the HAL,
     // I think it is subject to a race condition.
     // Several online discussions about this.
+
+    // HAL_SuspendTick only disables the interrupt.
+    // We want to disable the timer entirely.
+    // HAL_SuspendTick();
+    CLEAR_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
     if (g_canStop)
     {
-        /* Select the regulator state in Stop mode: Set PDDS and LPSDSR bit according to PWR_Regulator value */
-        MODIFY_REG(PWR->CR, (PWR_CR_PDDS | PWR_CR_LPSDSR), PWR_LOWPOWERREGULATOR_ON);
+        /* Select the regulator state in Stop mode:
+         * Clear PDDS (enter stop mode, not standby)
+         * Set LPSDSR (Low power regulator in deep sleep) */
+        MODIFY_REG(PWR->CR, PWR_CR_PDDS, PWR_LOWPOWERREGULATOR_ON);
         /* Set SLEEPDEEP bit of Cortex System Control Register */
         SET_BIT(SCB->SCR, ((uint32_t)SCB_SCR_SLEEPDEEP_Msk));
         // Wait for an event.
@@ -192,8 +272,24 @@ void stop_until_event(bool restoreClocks)
         MODIFY_REG(PWR->CR, (PWR_CR_LPSDSR), 0);
     }
     else
+    {
         __WFE();
-
+        __SEV();
+        __WFE();
+    }
+    SET_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
+    
+    #ifdef DEBUG_TIME
+    uint32_t exitTicks = HAL_GetTick();
+    uint32_t exitTime = millis1024();
+    uint32_t this_sleep = (1024 + exitTime - entryTime) % 1024;
+    time_asleep += this_sleep;
+    if (this_sleep > longest_sleep)
+        longest_sleep = this_sleep;
+    last_sleep = exitTime;
+    ticks_asleep += exitTicks - entryTicks;
+    hasSlept = true;
+    #endif
     // Calendar shadow registers don't update while we sleep.
     // We clear the RSF bit, and can't read the registers until hardware set it.
     RTC->ISR &= ~RTC_ISR_RSF;
@@ -225,26 +321,13 @@ void wait_until_alarm_stopped()
     {
         if ((alarmEntrySubSeconds - get_SSR()) % 1024 > alarmMillisFromNow + 2)
         {
-            debug_print("Alarm timeout caught!");
+            TIME_PRINT("Alarm timeout caught!");
             break;
         }
         if (g_rtcTicks - entry_ticks >= 2)
         {
-            debug_print("Timed out on alarm! alarmEntrySubseconds: %d, alarmMillisFromNow: %d, SSR: %ld\r\n",
+            TIME_PRINT("Timed out on alarm! alarmEntrySubseconds: %d, alarmMillisFromNow: %d, SSR: %ld\r\n",
                 alarmEntrySubSeconds, alarmMillisFromNow, get_SSR());
-                /*\r\n Entry millis: %lu, Alarm millis: %lu, Current millis: %lu\r\n",
-                entry_millis, s_alarmMillis, millis32());
-            debug_print("Time at setalarm seconds: %d subseconds: %lu\r\n", alarmEntryTime.Seconds, alarmEntryTime.SubSeconds);
-            debug_print("Alarm seconds: %d subseconds: %lu\r\n", rtcAlarm.AlarmTime.Seconds, rtcAlarm.AlarmTime.SubSeconds);
-            debug_print("Entry second: %d, subseconds: %lu\r\n", entryTime.Seconds, entryTime.SubSeconds);
-            debug_print("EXTI_PR: %lx\r\n", EXTI->PR);
-            debug_print("RTC_CR: %lx\r\n", RTC->CR);
-            debug_print("RTC_ISR: %lx\r\n", RTC->ISR);
-            debug_print("RTC ALARMSSR: %08lx, ALRMARR: %08lx\r\n" , RTC->ALRMASSR, RTC->ALRMAR);
-            debug_print("RTC      SSR: %08lx,      TR: %08lx, DR: %08lx\r\n", RTC->SSR, RTC->TR, RTC->DR);
-            */
-            //debug_print2("entry_irqs: %d, current_irqs: %d\r\n", entry_irqs, alarm_irq_ticks);
-            //debug_print2("entry_exit_irqs: %d, current_irqs: %d\r\n", entry_exit_irqs, alarm_irq_exit_ticks);
             break;
         }
         stop_until_event(false);

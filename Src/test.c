@@ -11,9 +11,24 @@ void Test()
 {
     //init_radio();//(true, 3);
     //g_canStop = false;
+    uint32_t lastTimePrint = g_rtcTicks;
     while (1)
     {
-        GPIOA->ODR ^= 1;
+        GPIOA->ODR ^= g_rtcTicks & 1;
+
+        processRadio();
+        process_wind();
+        processLight();
+        processBattery();
+        ProcessTemperature();
+        stop_until_event(true);
+        uint32_t ticks = g_rtcTicks;
+        if (ticks - lastTimePrint >= WAKEUP_FREQUENCY)
+        {
+            timePrintDebug();
+            lastTimePrint = ticks;
+        }
+        continue;
         
         //debug_print("Time time is: %lu, %ld, %lu\r\n", millis32(), HAL_GetTick(), g_rtcTicks);
 

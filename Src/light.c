@@ -13,8 +13,11 @@
 #include "light.h"
 #include "my_time.h"
 
-#define DEBUG_LIGHT
+#ifdef DEBUG_LIGHT
 #define LIGHT_PRINT(...) debug_print(__VA_ARGS__)
+#else
+#define LIGHT_PRINT(...) do {} while (0)
+#endif
 
 // veml7700 0x20
 

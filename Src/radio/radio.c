@@ -134,18 +134,18 @@ void radio_transmit(void* data, uint8_t len)
     s_txDone = false;
     RADIO_CHECK(CMT2300A_GoTx());
     CMT2300A_WriteFifo(data, len);
-    uint32_t entryMillis = millis32();
+    uint32_t entryMillis = millis1024();
     const uint32_t timeout = 32;
     while (!s_txDone)
     {
-        if (millis32() - entryMillis > timeout)
+        if ((1024 + millis1024() - entryMillis) % 1024 > timeout)
         {
             RADIO_PRINT("Radio TX TIMEOUT!\r\n");
             break;
         }
         stop_until_event(true);
     }
-    RADIO_PRINT("Time to transmit: %ld\r\n", millis32() - entryMillis);
+    RADIO_PRINT("Time to transmit: %ld\r\n", (1024 + millis1024() - entryMillis) % 1024);
     if (s_txDone)
     {
         radio_TX_DONE_CLR();

@@ -12,6 +12,9 @@
 #include "wind.h"
 #include "temperature.h"
 #include "my_time.h"
+#include "radio.h"
+#include "light.h"
+#include "battery.h"
 #include <stdbool.h>
 
 /* Private includes ----------------------------------------------------------*/
@@ -115,6 +118,7 @@ int main(void)
   //MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   InitScope();
+  init_radio();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -124,7 +128,10 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+    processRadio();
     process_wind();
+    processLight();
+    processBattery();
     ProcessTemperature();
     stop_until_event(true);
     /* USER CODE BEGIN 3 */
@@ -178,6 +185,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  FLASH->ACR |= FLASH_ACR_PRFTEN;
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)

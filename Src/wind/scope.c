@@ -7,7 +7,6 @@
 
 // Scope.c: Read from the ADC, send data to the USB port
 
-//#define DEBUG_SCOPE
 
 #include "scope.h"
 #include "stm32l1xx.h"
@@ -217,12 +216,19 @@ void DMA1_Channel1_IRQHandler(void)
 
 void InitScope()
 {
+    #ifdef DEBUG
+    uint32_t entryMillis = millis1024();
+    #endif
     InitADC();
     InitDMA();
     InitGPIO();
     InitTimers();
     UpdateScopeOutChannel();
     g_wind_init_required = false;
+    #ifdef DEBUG
+    uint32_t exitMillis = millis1024();
+    WIND_TIME_PRINT("Init Scope: %ld\r\n", (1024 + exitMillis - entryMillis) % 1024);
+    #endif
 }
 
 static bool IsSampleComplete()
@@ -230,16 +236,42 @@ static bool IsSampleComplete()
     return s_dma_complete;
 }
 
+uint32_t systick_enter, systick_beforeBegin, systick_afterBegin,
+        systick_beforeEnd, systick_beforeReturn,
+        systick_afterDelay, systick_beforeADC, systick_afterADC;
+
+void scopePrintTimes()
+{
+    uint32_t load = SysTick->LOAD;
+    uint32_t beforeBegin = (load + systick_enter - systick_beforeBegin)%load;
+    uint32_t afterBegin = (load + systick_beforeBegin - systick_afterBegin) %load;
+    uint32_t beforeEnd = (load + systick_afterBegin - systick_beforeEnd)%load;
+    uint32_t beforeReturn = (load + systick_beforeEnd - systick_beforeReturn)%load;
+    WIND_TIME_PRINT("Scope: before begin: %ld, after begin: %ld, beforeEnd: %ld, beforeReturn: %ld\r\n",
+        beforeBegin, afterBegin, beforeEnd, beforeReturn);
+
+    uint32_t afterDelay = (load + systick_beforeBegin - systick_afterDelay) % load;
+    uint32_t beforeADC = (load + systick_afterDelay - systick_beforeADC)%load;
+    uint32_t afterADC = (load + systick_beforeADC - systick_afterADC)%load;
+    WIND_TIME_PRINT("Scope Begin: afterDelay: %ld, before ADC: %ld, after ADC: %ld\r\n",
+        afterDelay, beforeADC, afterADC);
+
+
+}
+
 void ProcessScope(uint8_t channel, uint8_t direction)
 {
+    systick_enter = SysTick->VAL;
     while (1)
     {
-        uint32_t currentTicks = millis32();
+        uint32_t currentTicks = millis1024();
         switch (scopeState)
         {
             case ScopeState_Idle:
                 UpdateScopeChannels(channel, direction);
+                systick_beforeBegin = SysTick->VAL;
                 BeginScopeSample();
+                systick_afterBegin = SysTick->VAL;
                 waitCounts = 0;
                 lastScopeTicks = currentTicks;
                 scopeState = ScopeState_Sampling;
@@ -247,27 +279,21 @@ void ProcessScope(uint8_t channel, uint8_t direction)
             case ScopeState_Sampling:
             if (IsSampleComplete())
             {
+                systick_beforeEnd = SysTick->VAL;
                 EndScopeSample();
                 SendScopeSampleBinary();
                 //SendScopeDebug();
                 scopeState = ScopeState_Idle;
+                systick_beforeReturn = SysTick->VAL;            
+                //WIND_TIME_PRINT("Process wait cycles: %ld", waitCounts);
+                //scopePrintTimes();
                 return;
             }
-            else if (currentTicks - lastScopeTicks > scopeSampleInterval)
+            else if ((1024 + currentTicks - lastScopeTicks) % 1024 > 10)
             {
                 WIND_PRINT("SCOPE TIMEOUT: Entry: %lu, Current: %lu\r\n",
                     lastScopeTicks, currentTicks);
                 printMillisStatus();
-                #ifdef DEBUG_SCOPE
-                CDC_Transmit_FS((uint8_t*)buffer, sizeof(buffer));
-                HAL_Delay(1);
-                sendDmaState();
-                HAL_Delay(1);
-                CDC_Transmit_FS((uint8_t*)buffer, sizeof(buffer));
-                HAL_Delay(1);
-                sendADCState();
-                HAL_Delay(1);
-                #endif
                 ADC1->CR2 &= ~ADC_CR2_ADON;
                 scopeState = ScopeState_Idle;
                 return;
@@ -275,7 +301,7 @@ void ProcessScope(uint8_t channel, uint8_t direction)
             waitCounts++;
             break;
         }
-        __WFE();
+        sleep();
     }
 }
 
@@ -338,10 +364,10 @@ static void UpdateScopeInputChannel()
 
 static void BeginScopeSample()
 {
-    // Set A4 LOW to power on analog circuitry
-    // CHECK: Do we need to wait after this?
+    // Set A4 LOW to power on analog circuitry  
     GPIOA->BSRR = 1 << (4 + 16);
     delay_stopped(2);
+    systick_afterDelay = SysTick->VAL;
     // Ensure our analog reference is ready (in case it was turned off during sleep)
     //uint32_t entryTicks = HAL_GetTick();
     while ((PWR->CSR & PWR_CSR_VREFINTRDYF) == 0) {}
@@ -380,7 +406,9 @@ static void BeginScopeSample()
     *toggleODR &= ~togglePins;
 
     // Wait for the ADC to turn on.
+    systick_beforeADC = SysTick->VAL;
     while ((ADC1->SR & ADC_SR_ADONS) == 0) { }
+    systick_afterADC = SysTick->VAL;
     
     // Start TIM9. TIM2 and ADC will trigger off this event to start too.
     s_dma_complete = false;

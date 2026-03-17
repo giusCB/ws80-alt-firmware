@@ -47,8 +47,6 @@ void CreateRadioPacket(RadioPacketTypedef *packet);
 
 void init_radio()
 {
-    RADIO_PRINT("Radio init, press C...\r\n");
-    wait_for_continue();
     LoadRadioId();
     LoadFrequencySelector();
     configure_radio(true, g_frequencySelector);

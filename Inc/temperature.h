@@ -8,8 +8,6 @@
 #pragma once
 #include "stm32l1xx.h"
 
-#define DEBUG_TEMP
-
 void InitTemperature();
 void ProcessTemperature();
 

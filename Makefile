@@ -56,6 +56,9 @@ Src/usbd_desc.c \
 Src/usbd_cdc_if.c \
 Src/stm32l1xx_it.c \
 Src/stm32l1xx_hal_msp.c \
+Drivers/CMSIS-DSP-1.17.0/Source/BasicMathFunctions/arm_abs_q15.c \
+Drivers/CMSIS-DSP-1.17.0/Source/FastMathFunctions/arm_atan2_q15.c \
+Drivers/CMSIS-DSP-1.17.0/Source/FastMathFunctions/arm_divide_q15.c \
 Drivers/CMT2300a/cmt2300a.c \
 Drivers/CMT2300a/cmt2300a_hal.c \
 Drivers/CMT2300a/cmt_spi3.c \
@@ -157,6 +160,9 @@ C_INCLUDES =  \
 -IDrivers/CMT2300a \
 -IDrivers/STM32L1xx_HAL_Driver/Inc \
 -IDrivers/STM32L1xx_HAL_Driver/Inc/Legacy \
+-IDrivers/CMSIS-DSP-1.17.0/Include/ \
+-IDrivers/CMSIS-DSP-1.17.0/Include/dsp \
+-IDrivers/CMSIS-DSP-1.17.0/PrivateInclude \
 -IMiddlewares/ST/STM32_USB_Device_Library/Core/Inc \
 -IMiddlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc \
 -IDrivers/CMSIS/Device/ST/STM32L1xx/Include \

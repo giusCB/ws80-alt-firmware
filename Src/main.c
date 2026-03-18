@@ -108,7 +108,7 @@ int main(void)
   MX_GPIO_Init();
   //MX_DMA_Init();
   //MX_ADC_Init();
-  MX_I2C1_Init();
+  //MX_I2C1_Init();
   //MX_IWDG_Init();
   MX_RTC_Init();
   #ifdef DEBUG
@@ -529,6 +529,42 @@ static void MX_DMA_Init(void)
 
 }
 
+static void SetUnusedAnalog()
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  // Pins we don't set analog here that are set when sleeping:
+  // A0, A2, A6, A7
+  GPIO_InitStruct.Pin = GPIO_PIN_3 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  #ifndef DEBUG
+  GPIO_InitStruct.Pin |= GPIO_PIN_11 | GPIO_PIN_12;
+  #endif
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  // B12 - radio interrupt
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_2 | GPIO_PIN_13 | GPIO_PIN_3 | GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 |
+    GPIO_PIN_12 | GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+}
+
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -536,24 +572,29 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  SetUnusedAnalog();
+
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
 
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
+
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED_Pin|Ult0_dr1_Pin|Batt_sw_Pin|Analog_Pwr_Pin
-                          |analog_mux1_Pin|analog_mux2_Pin|Ult0_dr2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, Ult0_dr1_Pin|
+                          analog_mux1_Pin|analog_mux2_Pin|Ult0_dr2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LED_Pin|Analog_Pwr_Pin|Batt_sw_Pin,GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, Ult2_dr1_Pin|Ult2_dr2_Pin|Ult3_dr1_Pin|Ult3_dr2_Pin
-                          |ult1_dr1_Pin|ult1_dr2_Pin, GPIO_PIN_RESET);
+                          |ult1_dr1_Pin|ult1_dr2_Pin|GPIO_PIN_4, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, radio_clk_Pin, GPIO_PIN_RESET);
@@ -571,17 +612,13 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : Ult2_dr1_Pin Ult2_dr2_Pin Ult3_dr1_Pin Ult3_dr2_Pin
                            ult1_dr1_Pin ult1_dr2_Pin */
   GPIO_InitStruct.Pin = Ult2_dr1_Pin|Ult2_dr2_Pin|Ult3_dr1_Pin|Ult3_dr2_Pin
-                          |ult1_dr1_Pin|ult1_dr2_Pin;
+                          |ult1_dr1_Pin|ult1_dr2_Pin|GPIO_PIN_4;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : radio_int_Pin */
-  GPIO_InitStruct.Pin = radio_int_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+  
 
   /*Configure GPIO pins : radio_fifo_Pin radio_reg_Pin radio_clk_Pin */
   GPIO_InitStruct.Pin = radio_fifo_Pin|radio_reg_Pin|radio_clk_Pin;

@@ -5,6 +5,7 @@
 #include "crc.h"
 #include "light.h"
 #include "battery.h"
+#include "main.h"
 #include <stdbool.h>
 #include <string.h>
 
@@ -59,6 +60,7 @@ void LoadFrequencySelector()
     GPIOC->PUPDR = (GPIOC->PUPDR 
         & ~((3 << 10 * 2) | (3 << 11 * 2)))
         | (1 << 10 * 2) | (1 << 11 * 2);
+    GPIOC->MODER &= (3 << (10 * 2)) | (3 << (11 * 2));
     // Not sure how long it takes for the pull up resistor to work.
     // We'll wait 1/2 us.
     uint32_t entryTicks = SysTick->VAL; // 1 cycle
@@ -83,8 +85,20 @@ void LoadFrequencySelector()
     case 3:
         g_frequencySelector = 2;
     }
-    GPIOC->PUPDR = (GPIOC->PUPDR 
-        & ~((3 << 10 * 2) | (3 << 11 * 2)));
+    // Ooooh, we set these to have no pull, but failed to set them analog.
+    //GPIOC->PUPDR = (GPIOC->PUPDR 
+    //    & ~((3 << 10 * 2) | (3 << 11 * 2)));
+
+    // We're going to set them output to allow them to be used for debugging
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12;
+    if (g_frequencySelector == 2)
+        GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    else
+        GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
     RADIO_PRINT("Radio frequency selector: %d\r\n", g_frequencySelector);
 }
 

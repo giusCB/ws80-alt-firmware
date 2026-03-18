@@ -17,6 +17,7 @@
 extern RTC_HandleTypeDef hrtc;
 
 volatile uint32_t g_rtcTicks = 0;
+volatile bool asleep;
 
 #ifdef DEBUG
 volatile bool g_canStop = false;
@@ -24,7 +25,7 @@ volatile bool g_canStop = false;
 volatile bool g_canStop = true;
 #endif
 
-#ifdef DEBUG_TIME
+#ifdef DEBUG
 bool hasSlept;
 uint32_t last_sleep;
 uint32_t time_asleep, last_time_asleep;
@@ -32,6 +33,9 @@ uint32_t time_awake, last_time_awake;
 uint32_t sleep_count, last_sleep_count;
 uint32_t ticks_asleep;
 uint32_t longest_sleep;
+volatile uint32_t usb_wakeups;
+uint32_t last_usb_wakeups;
+uint32_t last_ticks;
 
 #define TIME_PRINT(...) debug_print(__VA_ARGS__)
 #else
@@ -168,42 +172,53 @@ void set_alarm(uint16_t millisFromNow)
 
 void timePrintDebug()
 {
+    #ifdef DEBUG_TIME
     uint32_t this_time_asleep = time_asleep - last_time_asleep;
     uint32_t this_time_awake = time_awake - last_time_awake;
     uint32_t this_sleep_count = sleep_count - last_sleep_count;
+    uint32_t this_usb_wakeups = usb_wakeups - last_usb_wakeups;
+    uint32_t ticks = HAL_GetTick();
+    uint32_t this_ticks = ticks - last_ticks;
     last_time_asleep = time_asleep;
     last_time_awake = time_awake;
     last_sleep_count = sleep_count;
+    last_usb_wakeups = usb_wakeups;
+    last_ticks = ticks;
 
     static bool print = true;
     if (print)
     {
-        TIME_PRINT("Ticks: %7ld, Time asleep: %7ld, Time awake: %7ld, sleep count: %7ld, Ticks asleep: %7ld\r\n",
-            g_rtcTicks, time_asleep, time_awake, sleep_count, ticks_asleep);
-        TIME_PRINT("       %7ld,        This: %7ld,       This: %7ld,        This: %7ld, longest: %7ld\r\n",
-            4, this_time_asleep, this_time_awake, this_sleep_count, longest_sleep);
+        TIME_PRINT("RTCks: %7ld, Time asleep: %7ld, Time awake: %7ld, sleep count: %7ld, HAL Ticks: %7ld\r\n",
+            g_rtcTicks, time_asleep, time_awake, sleep_count, ticks);
+        TIME_PRINT("       %7ld,        This: %7ld,       This: %7ld,        This: %7ld,      this: %7ld\r\n",
+            4, this_time_asleep, this_time_awake, this_sleep_count, this_ticks);
     }
     print = !print;
     longest_sleep = 0;
+    #endif
 }
 
 timeMeasurementTypdef measureTime()
 {
     timeMeasurementTypdef ret;
+    #ifdef DEBUG_TIME
     ret.millis1024 = millis1024();
     ret.ticks = HAL_GetTick();
     ret.systick = SysTick->VAL;
     ret.timeAsleep = time_asleep;
+    #endif
     return ret;
 }
 
 timeDifferenceTypedef subtractTimes(timeMeasurementTypdef t1, timeMeasurementTypdef t2)
 {
     timeDifferenceTypedef ret;
+    #ifdef DEBUG
     ret.millis = (1024 + t1.millis1024 - t2.millis1024) % 1024;
     
     ret.cycles = (t1.ticks - t2.ticks) * SysTick->LOAD + t2.systick - t1.systick;
     ret.timeAsleep = t1.timeAsleep - t2.timeAsleep;
+    #endif
     return ret;
 }
 
@@ -224,9 +239,11 @@ void printMeasurementDifference(timeDifferenceTypedef diff)
 
 void sleep()
 {
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12);
     CLEAR_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
     __WFE();
     SET_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
 }
 
 void stop_until_event(bool restoreClocks)
@@ -251,6 +268,7 @@ void stop_until_event(bool restoreClocks)
     // We want to disable the timer entirely.
     // HAL_SuspendTick();
     CLEAR_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
+    asleep = true;
     if (g_canStop)
     {
         /* Select the regulator state in Stop mode:
@@ -260,10 +278,21 @@ void stop_until_event(bool restoreClocks)
         /* Set SLEEPDEEP bit of Cortex System Control Register */
         SET_BIT(SCB->SCR, ((uint32_t)SCB_SCR_SLEEPDEEP_Msk));
         // Wait for an event.
+        GPIOB->BSRR = 1 << 4;
+        /*uint32_t oldAHBENR = RCC->AHBENR;
+        uint32_t oldAPB1ENR = RCC->APB1ENR;
+        uint32_t oldAPB2ENR = RCC->APB2ENR;
+        RCC->AHBENR &= ~(RCC_AHBENR_DMA1EN | 0xFF);
+        RCC->APB1ENR &= 0x4F0135C0;
+        RCC->APB2ENR &= 0xFFFFC5E2;*/
         __WFE();
         // Clear the bit that may have just been set:
         __SEV();
         __WFE();
+        /*RCC->AHBENR = oldAHBENR;
+        RCC->APB1ENR = oldAPB1ENR;
+        RCC->APB2ENR = oldAPB2ENR;*/
+        GPIOB->BSRR = 1 << (4 + 16);
         /* Reset SLEEPDEEP bit of Cortex System Control Register */
         CLEAR_BIT(SCB->SCR, ((uint32_t)SCB_SCR_SLEEPDEEP_Msk));
         // Reset the LPSDSR so next time we sleep we don't go into low power sleep. 
@@ -277,6 +306,7 @@ void stop_until_event(bool restoreClocks)
         __SEV();
         __WFE();
     }
+    asleep = false;
     SET_BIT(SysTick->CTRL,SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
     
     #ifdef DEBUG_TIME
@@ -332,11 +362,20 @@ void wait_until_alarm_stopped()
         }
         stop_until_event(false);
     }
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12);
     // STOP mode changed us to MSI instead of HSE. change it back:
     RCC->CR |= RCC_CR_HSEON | RCC_CR_HSION | RCC_CR_PLLON;
-    while (!(RCC->CR & RCC_CR_HSERDY));
-    while (!(RCC->CR & RCC_CR_PLLRDY));
-    while (!(RCC->CR & RCC_CR_HSIRDY));
+    do
+    {
+        // The HSE takes half a millisecond to startup.
+        // However, at this point we are on MSI and only consuming <1mA.
+        if (RCC->CR & RCC_CR_HSERDY)
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 << 16);
+        if (RCC->CR & RCC_CR_PLLRDY);
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_11 << 16);
+        if (RCC->CR & RCC_CR_HSIRDY);
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
+    } while ((RCC-> CR & (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY)) != (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY));
     RCC->CFGR = old_rcc_cfgr;
 
     //HAL_RTC_DeactivateAlarm(&hrtc, RTC_CR_ALRAE);

@@ -22,7 +22,7 @@ uint8_t g_windRingCounts[6];
 
 static uint32_t s_last_wind_sample = 0xFFFF;;
 
-uint8_t wind_sample_frequency = 2;
+uint8_t wind_sample_frequency = 4;
 const uint8_t max_volume = 12;
 
 void sample_wind();

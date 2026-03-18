@@ -192,10 +192,7 @@ void TIM9_IRQHandler()
         *toggleODR |= togglePin1;
     else
         *toggleODR ^= togglePins;
-    
-    if (tim9Ticks > tim9Cycles)
-        return;
-    
+        
     if (tim9Ticks == tim9Cycles)
     {
         // Turn off both toggle pins
@@ -294,7 +291,7 @@ void ProcessScope(uint8_t channel, uint8_t direction)
                 WIND_PRINT("SCOPE TIMEOUT: Entry: %lu, Current: %lu\r\n",
                     lastScopeTicks, currentTicks);
                 printMillisStatus();
-                ADC1->CR2 &= ~ADC_CR2_ADON;
+                EndScopeSample();
                 scopeState = ScopeState_Idle;
                 return;
             }
@@ -370,9 +367,10 @@ static void BeginScopeSample()
     systick_afterDelay = SysTick->VAL;
     // Ensure our analog reference is ready (in case it was turned off during sleep)
     //uint32_t entryTicks = HAL_GetTick();
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12);;
     while ((PWR->CSR & PWR_CSR_VREFINTRDYF) == 0) {}
-    //WIND_PRINT("Wait for PWR_CSR_VREFINTRDYF: %ld\r\n", HAL_GetTick() - entryTicks);
-
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 << 16);; // Not measureable
+    
     // Reset counters,
     // Set the update bit to ensure any changes have been copied to shadow registers (?)
     // We need to do this before we turn the ADC on, or the update event of TIM2 will trigger it.
@@ -405,6 +403,7 @@ static void BeginScopeSample()
     //Set output pins low:
     *toggleODR &= ~togglePins;
 
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_11 << 16);;
     // Wait for the ADC to turn on.
     systick_beforeADC = SysTick->VAL;
     while ((ADC1->SR & ADC_SR_ADONS) == 0) { }
@@ -413,12 +412,18 @@ static void BeginScopeSample()
     // Start TIM9. TIM2 and ADC will trigger off this event to start too.
     s_dma_complete = false;
     TIM9->CR1 |= TIM_CR1_CEN;
+    DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);;
 }
 
 static void EndScopeSample()
 {
     // Turn off the ADC   
     ADC1->CR2 &= ~ADC_CR2_ADON;
+    // Turn off the timers? They should already be off
+    TIM9->CR1 &= ~TIM_CR1_CEN;
+    TIM2->CR1 &= ~TIM_CR1_CEN;
+    // Turn off our MUX pins
+    GPIOA->BSRR = ((1 << 6) | (1 << 7)) << 16;
     // Turn off the Op amps and mux:
     GPIOA->BSRR = 1 << (4);
 }

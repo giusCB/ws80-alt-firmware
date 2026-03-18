@@ -126,9 +126,20 @@ void test_radio()
     CMT2300A_GoSleep();
 }
 
+void sleep_radio()
+{
+  CMT2300A_GoSleep();
+}
+
 void radio_transmit(void* data, uint8_t len)
 {
-    //test_radio();
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    // Turn on our interrupt pin
+    // We control it here because leaving the interrupt on during stop mode consumes 100uA.
+    GPIO_InitStruct.Pin = radio_int_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
     radio_prepare_tx();
     radio_undocumented_CUS_CMT4_TX8_9(25);
     s_txDone = false;
@@ -154,6 +165,11 @@ void radio_transmit(void* data, uint8_t len)
     else
         configure_radio(false, g_frequencySelector);
     RADIO_PRINT("Radio Tx Done\r\n");
+    // Turn off our interrupt pin:
+    GPIO_InitStruct.Pin = radio_int_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
 }
 
 void EXTI15_10_IRQHandler(void)

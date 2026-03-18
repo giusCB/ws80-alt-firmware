@@ -11,10 +11,12 @@
 #ifdef DEBUG
 //#define DEBUG_TEMP
 //#define DEBUG_WIND
-//#define DEBUG_LIGHT
-#define DEBUG_TIME
+#define DEBUG_LIGHT
+//#define DEBUG_TIME
 //#define DEBUG_SCOPE
 #endif
+
+#define DEBUG_POWER(...) do {} while (0)
 
 extern volatile bool g_binaryDebug;
 extern volatile bool g_continueFlag;

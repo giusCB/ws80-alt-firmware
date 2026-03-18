@@ -12,21 +12,19 @@
 #define WAKEUP_FREQUENCY 4
 #define RTC_FREQ 32768
 
-#ifdef DEBUG
-struct timeMeasurement
+typedef struct timeMeasurement
 {
     uint32_t millis1024, ticks, systick, timeAsleep
-} typedef timeMeasurementTypdef;
-struct timeDifference
+} timeMeasurementTypdef;
+typedef struct timeDifference
 {
     uint32_t millis, cycles, timeAsleep
-} typedef timeDifferenceTypedef;
+} timeDifferenceTypedef;
 void timePrintDebug();
 timeMeasurementTypdef measureTime();
 timeDifferenceTypedef subtractTimes(timeMeasurementTypdef t1, timeMeasurementTypdef t2);
 timeDifferenceTypedef addDiffs(timeDifferenceTypedef t1, timeDifferenceTypedef t2);
 void printMeasurementDifference(timeDifferenceTypedef diff);
-#endif
 
 uint32_t millis32();
 uint16_t millis1024();

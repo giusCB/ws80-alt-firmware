@@ -233,19 +233,24 @@ void DMA1_Channel1_IRQHandler(void)
 }
 #endif
 
+#ifdef DEBUG
+extern volatile bool asleep;
+extern volatile uint32_t usb_wakeups;
 /**
   * @brief This function handles USB low priority interrupt.
   */
 void USB_LP_IRQHandler(void)
 {
   /* USER CODE BEGIN USB_LP_IRQn 0 */
-
+  if (asleep)
+    usb_wakeups++;
   /* USER CODE END USB_LP_IRQn 0 */
   HAL_PCD_IRQHandler(&hpcd_USB_FS);
   /* USER CODE BEGIN USB_LP_IRQn 1 */
 
   /* USER CODE END USB_LP_IRQn 1 */
 }
+#endif
 
 #if 0
 /**

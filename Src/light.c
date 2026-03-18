@@ -8,10 +8,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stm32l1xx.h"
-#include "stm32l1xx_hal_i2c.h"
 #include "debug.h"
 #include "light.h"
 #include "my_time.h"
+#include "I2C.h"
 
 #ifdef DEBUG_LIGHT
 #define LIGHT_PRINT(...) debug_print(__VA_ARGS__)
@@ -45,10 +45,6 @@
 // Original firmware then divides by 40000
 // Sierragliding comment: // float light_wm2 = light_raw * 0.078925f; // W/m2
 
-extern I2C_HandleTypeDef hi2c1;
-
-bool I2CReadFromAddress(uint8_t address, uint8_t* buffer, uint8_t len);
-bool I2CWriteToAddress(uint8_t address, uint8_t* buffer, uint8_t len);
 bool lightMeasurementAvailable();
 bool writeLightReg(uint8_t addr, uint8_t val);
 uint8_t readLightReg(uint8_t addr);
@@ -62,7 +58,7 @@ int16_t lightMeasurement;
 uint8_t uvMeasurement;
 bool lightInitialised;
 uint32_t lastLightMeasurement = 0xFFFF;
-const uint8_t lightInterval_s = 2;
+const uint8_t lightInterval_s = 4;
 const uint8_t lightInterval_rtc = lightInterval_s * WAKEUP_FREQUENCY;
 
 void processLight()
@@ -77,14 +73,17 @@ void processLight()
         return;
     }
     uint32_t ticks = g_rtcTicks;
-    if (ticks - lastLightMeasurement >= lightInterval_rtc &&
-        lightMeasurementAvailable())
+    if (ticks - lastLightMeasurement >= lightInterval_rtc)
     {
-        LIGHT_PRINT("Measuring light. Interval: %d\r\n", ticks - lastLightMeasurement);
-        lightInitialised = readLight();
-        if (!lightInitialised)
-            LIGHT_PRINT("Failed to read light!\r\n");
-        lastLightMeasurement = ticks;
+        if (lightMeasurementAvailable())
+        {
+            LIGHT_PRINT("Measuring light. Interval: %d\r\n", ticks - lastLightMeasurement);
+            lightInitialised = readLight();
+            if (!lightInitialised)
+                LIGHT_PRINT("Failed to read light!\r\n");
+            lastLightMeasurement = ticks;
+        }
+        WaitForStop();
     }
 }
 
@@ -108,19 +107,18 @@ void readPossibleLightInterface()
         uint8_t device = devices[i];
         LIGHT_PRINT("Device: 0x%02x ", device);
         buffer[0] = 0;
-        HAL_StatusTypeDef err = HAL_I2C_Master_Transmit(&hi2c1, device, buffer, 1, 20);
+        bool success = I2CWriteToAddress(device, buffer, 1);
         // Ensure that the buffers have values that will change:
         buffer[0] = SysTick->VAL;
         buffer[1] = SysTick->VAL;
         buffer[2] = SysTick->VAL;
-        if (err == HAL_OK)
+        if (success)
         {
-            err = HAL_I2C_Master_Receive(&hi2c1,
-                device, buffer, 10, 100);
+            success = I2CReadFromAddress(device, buffer, 10);
             LIGHT_PRINT("Write success. Read: (%d) "
                 "%02x %02x %02x %02x %02x %02x "
                 "%02x %02x %02x %02x\r\n",
-                err, buffer[0], buffer[1], buffer[2],
+                success, buffer[0], buffer[1], buffer[2],
                 buffer[3], buffer[4], buffer[5],
                 buffer[6], buffer[7], buffer[8],
                 buffer[9]);
@@ -135,15 +133,15 @@ bool writeLightReg(uint8_t addr, uint8_t val)
     uint8_t buffer[2];
     buffer[0] = addr;
     buffer[1] = val;
-    return HAL_I2C_Master_Transmit(&hi2c1, lightAddress, buffer, 2, 20) == HAL_OK;
+    return I2CWriteToAddress(lightAddress, buffer, 2);
 }
 
 uint8_t readLightReg(uint8_t addr)
 {
-    if (HAL_OK != HAL_I2C_Master_Transmit(&hi2c1, lightAddress, &addr, 1, 20))
+    if (!I2CWriteToAddress(lightAddress, &addr, 1))
         return 0;
     uint8_t ret;
-    if (HAL_OK != HAL_I2C_Master_Receive(&hi2c1, lightAddress, &ret, 1, 20))
+    if (!I2CReadFromAddress(lightAddress, &ret, 1))
         return 0;
     return ret;
 }
@@ -151,17 +149,24 @@ uint8_t readLightReg(uint8_t addr)
 bool readLightVal(uint32_t* ret)
 {
     uint8_t addr = 0x0D;
-    if (HAL_OK != HAL_I2C_Master_Transmit(&hi2c1, lightAddress, &addr, 1, 20))
+    if (!I2CWriteToAddress(lightAddress, &addr, 1))
     {
         LIGHT_PRINT("Failed to set light data address 0x0D!\r\n");
         return false;
     }
-    if (HAL_OK != HAL_I2C_Master_Receive(&hi2c1, lightAddress, (uint8_t*)ret, 3, 20))
+    if (!I2CReadFromAddress(lightAddress, (uint8_t*)ret, 3))
     {
         LIGHT_PRINT("Failed to receive light data!\r\n");
         return false;
     }
+    #ifdef DEBUG_LIGHT
     return true;
+    #endif
+}
+
+void sleepLight()
+{
+    writeLightReg(0x00, 0x00);
 }
 
 bool readLight()
@@ -199,8 +204,6 @@ bool initLight()
         writeLightReg(0x00, 0x10); // reset
         return false;
     }
-    uint8_t reg4 = readLightReg(0x04);
-    LIGHT_PRINT("Light reg4: %02x\r\n", reg4);
     lightPartId = readLightReg(0x06);
     // ALS_GAIN Set gain to unity
     if (!writeLightReg(0x05, 0x00))
@@ -212,5 +215,8 @@ bool initLight()
     if (!writeLightReg(0x00, 0x02))
         return false;
     LIGHT_PRINT("lightPartId: %02x\r\n", lightPartId);
+    
+    WaitForStop();
+
     return lightPartId != 0;
 }

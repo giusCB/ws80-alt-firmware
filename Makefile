@@ -48,6 +48,7 @@ Src/radio/radio.c \
 Src/radio/radio_data.c \
 Src/radio/radio_intermediate.c \
 Src/crc.c \
+Src/I2C.c \
 Src/light.c \
 Src/battery.c \
 Src/usb_device.c \
@@ -143,11 +144,11 @@ MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
 AS_DEFS = 
 
 # C defines
+# -DDEBUG \
+
 C_DEFS =  \
--DDEBUG \
 -DUSE_HAL_DRIVER \
 -DSTM32L151xC
-
 
 # AS includes
 AS_INCLUDES = 

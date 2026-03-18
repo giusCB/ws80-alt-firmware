@@ -34,8 +34,8 @@ void measureBattery()
     g_wind_init_required = true;
 
     // Set the switch to output
-    GPIOA->MODER = (GPIOA->MODER & (~3 << battSwPin)) 
-        | 1 << battSwPin;
+    GPIOA->MODER = (GPIOA->MODER & ~(3 << (battSwPin * 2)))
+        | (1 << (battSwPin * 2));
     // Set the switch low
     GPIOA->BSRR = 1 << (battSwPin + 16);
     delay_stopped(10);
@@ -54,7 +54,7 @@ void measureBattery()
     ADC1->CR2 |= ADC_CR2_ADON;
     // Wait for the ADC to turn on and the regular channel to become ready:
     uint32_t entryTicks = HAL_GetTick();
-    while ((ADC1->SR & (ADC_SR_ADONS | ADC_SR_RCNR)) != (ADC_SR_ADONS | ADC_SR_RCNR))
+    while (((ADC1->SR ^ ADC_SR_RCNR) & (ADC_SR_ADONS | ADC_SR_RCNR)) != (ADC_SR_ADONS | ADC_SR_RCNR))
     {
         if (HAL_GetTick() - entryTicks > batt_timeout)
         {
@@ -77,8 +77,10 @@ void measureBattery()
     // Turn off the ADC:
     ADC1->CR2 &= ~ADC_CR2_ADON;
     // Set the battery switch analog:
+    // TODO: Change this to input pullup,
+    // because it's the calibration switch.
     GPIOA->MODER = (GPIOA->MODER & ~(3 << (battSwPin * 2))) 
-        | MODE_ANALOG << (battSwPin * 2);
+        | (MODE_ANALOG << (battSwPin * 2));
     g_batteryMeasurement = batt_raw / 25;
     BATTERY_PRINT("Battery raw: %d, processed: %d\r\n", batt_raw, g_batteryMeasurement);
 }

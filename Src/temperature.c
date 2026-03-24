@@ -14,18 +14,18 @@
 #include "stm32l1xx.h"
 #include "my_time.h"
 #include "temperature.h"
-
 #include "I2C.h"
-
-//#define DEBUG_TEMP
-#ifdef DEBUG_TEMP
 #include "debug.h"
+
+#ifdef DEBUG_TEMP
+const uint8_t tempMeasurementInterval_s = 3;
+#else
+const uint8_t tempMeasurementInterval_s = 30;
 #endif
 
 enum TempSensorEnum { TS_Missing, SHT3x, SHT4x, HTU21C };
 enum TempSensorEnum tempSensorType;
 
-const uint8_t tempMeasurementInterval_s = 30;
 const uint8_t tempMeasurementInterval_rtc = tempMeasurementInterval_s * WAKEUP_FREQUENCY;
 const uint16_t tempSensorDelay = 1;
 uint32_t lastTempMeasurementTicks = 0xFFFF;

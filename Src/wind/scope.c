@@ -239,6 +239,7 @@ uint32_t systick_enter, systick_beforeBegin, systick_afterBegin,
 
 void scopePrintTimes()
 {
+    #ifdef DEBUG_WIND_TIME
     uint32_t load = SysTick->LOAD;
     uint32_t beforeBegin = (load + systick_enter - systick_beforeBegin)%load;
     uint32_t afterBegin = (load + systick_beforeBegin - systick_afterBegin) %load;
@@ -252,8 +253,7 @@ void scopePrintTimes()
     uint32_t afterADC = (load + systick_beforeADC - systick_afterADC)%load;
     WIND_TIME_PRINT("Scope Begin: afterDelay: %ld, before ADC: %ld, after ADC: %ld\r\n",
         afterDelay, beforeADC, afterADC);
-
-
+    #endif
 }
 
 void ProcessScope(uint8_t channel, uint8_t direction)

@@ -246,6 +246,72 @@ void sleep()
     DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
 }
 
+void preparePinsForStop()
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // A0, LED
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = MODE_ANALOG;
+    GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
+
+    // B12: Radio interrupt.
+    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    GPIO_InitStruct.Mode = MODE_ANALOG;
+    GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOB,&GPIO_InitStruct);
+
+    // All C pins
+    GPIO_InitStruct.Pin = GPIO_PIN_15|GPIO_PIN_14|GPIO_PIN_13|GPIO_PIN_12|GPIO_PIN_11|GPIO_PIN_10|GPIO_PIN_9|GPIO_PIN_7|GPIO_PIN_6|GPIO_PIN_5|GPIO_PIN_4|GPIO_PIN_3|GPIO_PIN_2|GPIO_PIN_1|GPIO_PIN_0;
+    GPIO_InitStruct.Mode = MODE_ANALOG;
+    GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOC,&GPIO_InitStruct);
+
+    // Oscillator, 2.4 mV
+    GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_0;
+    GPIO_InitStruct.Mode = MODE_ANALOG;
+    GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOH,&GPIO_InitStruct);
+    return;
+}
+
+void resumePinsAfterStop()
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    // A0, LED
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
+
+    // Radio interrupt is handled by our radio code.
+
+      /*Configure GPIO pins : radio_fifo_Pin radio_reg_Pin radio_clk_Pin */
+    GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    // C pins are handled by our radio code?
+
+    // Oscillator pins don't need to be set back?
+}
+
+void stopLowPower()
+{
+    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
+    PWR->CR |= PWR_CR_CWUF;
+    PWR->CR = (PWR->CR & ~PWR_CR_PVDE) | PWR_CR_ULP | PWR_CR_FWU;
+    //set_many_pins_analog();
+    preparePinsForStop();
+    stop_until_event(true);
+    resumePinsAfterStop();
+
+    PWR->CR = (PWR->CR & ~PWR_CR_ULP) | PWR_CR_PVDE;
+}
+
 void stop_until_event(bool restoreClocks)
 {
     #ifdef DEBUG_TIME
@@ -371,9 +437,9 @@ void wait_until_alarm_stopped()
         // However, at this point we are on MSI and only consuming <1mA.
         if (RCC->CR & RCC_CR_HSERDY)
             DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 << 16);
-        if (RCC->CR & RCC_CR_PLLRDY);
+        if (RCC->CR & RCC_CR_PLLRDY)
             DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_11 << 16);
-        if (RCC->CR & RCC_CR_HSIRDY);
+        if (RCC->CR & RCC_CR_HSIRDY)
             DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
     } while ((RCC-> CR & (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY)) != (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY));
     RCC->CFGR = old_rcc_cfgr;

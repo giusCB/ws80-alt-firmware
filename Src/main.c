@@ -41,7 +41,9 @@
 ADC_HandleTypeDef hadc;
 DMA_HandleTypeDef hdma_adc;
 
+#ifdef HAL_I2C
 I2C_HandleTypeDef hi2c1;
+#endif
 
 IWDG_HandleTypeDef hiwdg;
 
@@ -59,7 +61,9 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_ADC_Init(void);
+#ifdef HAL_I2C
 static void MX_I2C1_Init(void);
+#endif
 static void MX_IWDG_Init(void);
 static void MX_RTC_Init(void);
 static void MX_TIM9_Init(void);
@@ -108,7 +112,9 @@ int main(void)
   MX_GPIO_Init();
   //MX_DMA_Init();
   //MX_ADC_Init();
-  //MX_I2C1_Init();
+  #ifdef HAL_I2C
+  MX_I2C1_Init();
+  #endif
   //MX_IWDG_Init();
   MX_RTC_Init();
   #ifdef DEBUG
@@ -133,7 +139,8 @@ int main(void)
     processLight();
     processBattery();
     ProcessTemperature();
-    stop_until_event(true);
+    stopLowPower();
+    //stop_until_event(true);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -249,6 +256,7 @@ static void MX_ADC_Init(void)
 
 }
 
+#ifdef HAL_I2C
 /**
   * @brief I2C1 Initialization Function
   * @param None
@@ -282,6 +290,7 @@ static void MX_I2C1_Init(void)
   /* USER CODE END I2C1_Init 2 */
 
 }
+#endif
 
 /**
   * @brief IWDG Initialization Function
@@ -582,6 +591,14 @@ static void MX_GPIO_Init(void)
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  #ifndef HAL_I2C
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  #endif
 
   /* USER CODE END MX_GPIO_Init_1 */
 

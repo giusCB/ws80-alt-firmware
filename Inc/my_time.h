@@ -32,6 +32,7 @@ void set_alarm(uint16_t millisFromNow);
 void wait_until_alarm_stopped();
 void delay_stopped(uint16_t delay);
 void stop_until_event(bool returnToHSE);
+void stopLowPower();
 void printMillisStatus();
 void delayMicros(uint16_t amt);
 void sleep();

@@ -170,6 +170,7 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* hadc)
 
 }
 
+#ifdef HAL_I2C
 /**
   * @brief I2C MSP Initialization
   * This function configures the hardware resources used in this example
@@ -237,7 +238,7 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* hi2c)
   }
 
 }
-
+#endif
 /**
   * @brief RTC MSP Initialization
   * This function configures the hardware resources used in this example

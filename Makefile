@@ -20,7 +20,7 @@ TARGET = ws80-alt-firmware
 # building variables
 ######################################
 # debug build?
-DEBUG = 0
+# DEBUG = 0
 # optimization
 OPT = -O2
 
@@ -29,7 +29,11 @@ OPT = -O2
 # paths
 #######################################
 # Build path
+ifeq ($(DEBUG), 1)
+BUILD_DIR = build_debug
+else
 BUILD_DIR = build
+endif
 
 ######################################
 # source
@@ -145,10 +149,15 @@ AS_DEFS =
 
 # C defines
 # -DDEBUG \
+# -DHAL_I2C \
 
 C_DEFS =  \
 -DUSE_HAL_DRIVER \
 -DSTM32L151xC
+
+ifeq ($(DEBUG), 1)
+C_DEFS += -DDEBUG
+endif
 
 # AS includes
 AS_INCLUDES = 

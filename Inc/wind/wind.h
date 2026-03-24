@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include "debug.h"
 
-#define WIND_SAMPLE_SIZE 900
+//#define WIND_SAMPLE_SIZE 256
 
 #ifdef DEBUG_WIND
 #define WIND_PRINT(...) do { debug_print(__VA_ARGS__); } while (0)
@@ -19,9 +19,11 @@
 #endif
 
 #ifdef DEBUG_WIND_TIME
-#define WIND_TIME_PRINT(...) debug_print(__VA_ARGS__)
+#define ON_WIND_TIME(A) do { __VA_ARGS__; } while (0)
+#define WIND_TIME_PRINT(...) WIND_PRINT(__VA_ARGS__)
 #else
 #define WIND_TIME_PRINT(...) do {} while(0)
+#define ON_WIND_TIME(...) do {} while (0)
 #endif
 
 enum transducer_enum

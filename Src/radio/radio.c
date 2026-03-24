@@ -104,11 +104,10 @@ void configure_radio(bool first_init,uint16_t frequency_selector)
 
 void radio_configure_payload(void)
 {
-  CMT2300A_ConfigGpio(0x17);
-  CMT2300A_EnableInterrupt(0x21);
+  CMT2300A_ConfigGpio(CMT2300A_GPIO3_SEL_DOUT | CMT2300A_GPIO2_SEL_INT2 | CMT2300A_GPIO1_SEL_DCLK/*0x17*/);
+  CMT2300A_EnableInterrupt(CMT2300A_MASK_TX_DONE_EN | CMT2300A_MASK_PKT_DONE_EN/*0x21*/);
   CMT2300A_EnableLfosc(false);
   CMT2300A_EnableFifoMerge(0);
-                    /* missing parameter 0x12 */
   CMT2300A_SetFifoThreshold(0x12);
   CMT2300A_SetPayloadLength(0x12);
   RADIO_CHECK(CMT2300A_GoSleep());
@@ -136,10 +135,13 @@ void radio_transmit(void* data, uint8_t len)
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     // Turn on our interrupt pin
     // We control it here because leaving the interrupt on during stop mode consumes 100uA.
+    __HAL_RCC_GPIOB_CLK_ENABLE();
     GPIO_InitStruct.Pin = radio_int_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    __HAL_GPIO_EXTI_CLEAR_IT(radio_int_Pin);
     HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+
     radio_prepare_tx();
     radio_undocumented_CUS_CMT4_TX8_9(25);
     s_txDone = false;
@@ -149,6 +151,9 @@ void radio_transmit(void* data, uint8_t len)
     const uint32_t timeout = 32;
     while (!s_txDone)
     {
+      // Sometimes we don't get the TX done event from the radio,
+      // So this alarm is a backup to ensure we don't sleep until the next RTC tick.
+        set_alarm(timeout);
         if ((1024 + millis1024() - entryMillis) % 1024 > timeout)
         {
             RADIO_PRINT("Radio TX TIMEOUT!\r\n");
@@ -185,14 +190,14 @@ void radio_prepare_tx(void)
   CMT2300A_ClearTxFifo();
                     /* Int1 = 7: CMT2300A_INT_SEL_PKT_OK
                        Int2 = 10: CMT2300A_INT_SEL_TX_DONE */
-  CMT2300A_ConfigInterrupt(7,10);
+  CMT2300A_ConfigInterrupt(CMT2300A_INT_SEL_PKT_OK,CMT2300A_INT_SEL_TX_DONE);
   radio_TX_DONE_CLR();
   return;
 }
 
 void radio_TX_DONE_CLR(void)
 {
-  CMT2300A_WriteReg(0x6a,4);
+  CMT2300A_WriteReg(CMT2300A_CUS_INT_CLR1,CMT2300A_MASK_TX_DONE_CLR);
   return;
 }
 

@@ -12,9 +12,21 @@
 #include <math.h>
 
 #define SAMPLE_BUFFER_SIZE 60
+#define DEBUG_CALC_WIND
+#define DEBUG_PROC_WIND
+
+#ifdef DEBUG_CALC_WIND
+#define WIND_PRINT_CALC_WIND(...) WIND_PRINT(__VA_ARGS__)
+#define WAIT_CALC_WIND() wait_for_continue()
+#else
 #define WIND_PRINT_CALC_WIND(...) do {} while (0)
 #define WAIT_CALC_WIND(...) do {} while (0)
+#endif
+#ifdef DEBUG_PROC_WIND
+#define WIND_PRINT_PROC_WAVE(...) WIND_PRINT(__VA_ARGS__)
+#else
 #define WIND_PRINT_PROC_WAVE(...) do {} while (0)
+#endif
 
 // These are cos and sin with range -2048 -> +2048 == -2^11 -> + 2^11
 // Period is 24.5 samples.
@@ -91,9 +103,9 @@ void processWindWaveform(uint8_t channel, uint8_t direction)
     // Then, sum 2^8 values
     // So we need to lose 12 bits in total.
 
-    uint16_t systick_entry, systick_beforeLoop, systick_afterLoop, systick_afterTan;
+    ON_WIND_TIME(uint16_t systick_entry, systick_beforeLoop, systick_afterLoop, systick_afterTan);
 
-    systick_entry = SysTick->VAL;
+    ON_WIND_TIME(systick_entry = SysTick->VAL);
     const uint8_t sampleMax = 245; // 49 * 5;
     const uint8_t cycleLength = 49;
     int32_t sum = 0;
@@ -102,11 +114,10 @@ void processWindWaveform(uint8_t channel, uint8_t direction)
     int32_t avg = sum / sampleMax;
     int32_t cosSum = 0;
     int32_t sinSum = 0;
-    systick_beforeLoop = SysTick->VAL;
+    ON_WIND_TIME(systick_beforeLoop = SysTick->VAL);
     int16_t *pCos = cos24_5;
     int16_t *pSin = sin24_5;
     int16_t *pCosEnd = pCos + cycleLength;
-    int16_t *pSinEnd = pSin + cycleLength;
     for (uint8_t i = 0; i < sampleMax; i++)
     {
         int16_t rawVal = g_wind_measurement[i];
@@ -127,7 +138,7 @@ void processWindWaveform(uint8_t channel, uint8_t direction)
             pSin = sin24_5;
         }
     }
-    systick_afterLoop = SysTick->VAL;
+    ON_WIND_TIME(systick_afterLoop = SysTick->VAL);
     const int32_t window_sum = 507782; // 2^19
     WIND_PRINT_PROC_WAVE("%d, %d avg: %ld, cosSum: %ld, sinSum: %ld\r\n", channel, direction, avg, cosSum, sinSum);
     int32_t cos16 = cosSum / window_sum; // maximum of 2^12. More likely 2^8 or less.
@@ -137,18 +148,23 @@ void processWindWaveform(uint8_t channel, uint8_t direction)
     WIND_PRINT_PROC_WAVE("%d, %d cos16: %ld, sin16: %ld, power: %ld\r\n", channel, direction, cos16, sin16, power);
     g_signalPowers[channel][direction] = power;
 
-    #if 1
+    
     q15_t cosQ = cosSum >> 16;
     q15_t sinQ = sinSum >> 16;
     q15_t phaseQ;
-    arm_atan2_q15(cosQ, sinQ, &phaseQ);
+    arm_atan2_q15(sinQ, cosQ, &phaseQ);
     s_signalPhases[channel][direction] = phaseQ;
-    #else
+    
+    #ifdef DEBUG_WIND
     double phase = atan2(sinSum, cosSum);
-    s_signalPhases[channel][direction] = phase * (1 << 13); // phase maximum +/- pi, this has maximum value +/- 2^15
-    #endif
+    q2_13 slowPhase = (phase * (1 << 13));
 
-    systick_afterTan = SysTick->VAL;
+    WIND_PRINT_PROC_WAVE("Quick phase: %d (%x), long phase: %d (%x)\r\n", phaseQ, phaseQ, slowPhase, slowPhase);
+    #endif
+    //s_signalPhases[channel][direction] = phase * (1 << 13); // phase maximum +/- pi, this has maximum value +/- 2^15
+    
+
+    ON_WIND_TIME(systick_afterTan = SysTick->VAL);
     #if 0
     uint32_t load = SysTick->LOAD;
     uint32_t beforeLoop = (load + systick_entry - systick_beforeLoop) %load;

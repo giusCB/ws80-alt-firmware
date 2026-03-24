@@ -9,7 +9,7 @@
 #include<stdbool.h>
 
 #ifdef DEBUG
-//#define DEBUG_TEMP
+#define DEBUG_TEMP
 //#define DEBUG_WIND
 #define DEBUG_LIGHT
 //#define DEBUG_TIME

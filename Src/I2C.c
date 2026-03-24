@@ -21,11 +21,18 @@ void Delay_micros(uint32_t amt)
 {
     uint32_t start = SysTick->VAL;
     uint32_t ticks = amt * 32;
-    while (SysTick->VAL - start < ticks)
+    uint32_t load = SysTick->LOAD;
+    if (start < ticks)
+    {
+        while (SysTick->VAL < start)
+        {}
+        start += load;
+    }
+    while (start - SysTick->VAL < ticks)
     {}
 }
 
-static void I2CDelay() { Delay_micros(10); }
+static void I2CDelay() { Delay_micros(4); }
 
 void InitI2C()
 {
@@ -67,7 +74,7 @@ void I2CSendBit(uint8_t bit)
     I2CDelay();
 }
 
-bool I2CReadBit()
+bool I2CReadBit(bool pullDownAfter)
 {
     // Set SDA High-Z:
     I2C_GPIO->BSRR = 1 << SDA;
@@ -79,6 +86,8 @@ bool I2CReadBit()
     uint8_t bit = (I2C_GPIO->IDR >> SDA) & 1;
     // Pull clock low
     I2C_GPIO->BSRR = 0x10000 << SCL;
+    if (pullDownAfter)
+        I2C_GPIO->BSRR = 0x10000 << SDA;
     I2CDelay();
     return bit;
 }
@@ -91,7 +100,7 @@ bool I2CSendByte(uint8_t byte)
         I2CSendBit(thisBit);
         byte <<= 1;
     }
-    return !I2CReadBit();
+    return !I2CReadBit(true);
 }
 
 uint8_t I2CReadByte()
@@ -105,7 +114,7 @@ uint8_t I2CReadByte()
     for (int i = 0; i < 8; i++)
     {
         ret <<=1;
-        ret |= I2CReadBit();
+        ret |= I2CReadBit(false);
     }
     return ret;
 }
@@ -113,7 +122,7 @@ uint8_t I2CReadByte()
 bool I2CReadFromAddress(uint8_t address, uint8_t* buffer, uint8_t len)
 {
     #ifdef HAL_I2C
-    return HAL_I2C_Master_Receive(&hi2c1, lightAddress, &ret, 1, 20) == HAL_OK;
+    return HAL_I2C_Master_Receive(&hi2c1, address, buffer, len, 20) == HAL_OK;
     #else
     I2CStart();
     bool success = I2CSendByte(address | 1);
@@ -126,6 +135,9 @@ bool I2CReadFromAddress(uint8_t address, uint8_t* buffer, uint8_t len)
             else
                 I2CSendBit(1);
         }
+    
+    I2C_GPIO->BSRR = 0x10000 << SDA;
+    I2CDelay();
     I2CStop();
     return success;
     #endif
@@ -161,10 +173,12 @@ void WaitForStop()
     { 
         if (HAL_GetTick() - entryTicks > 5)
         {
-            LIGHT_PRINT("TIMEOUT waiting for stop!");
+            debug_print("TIMEOUT waiting for stop!");
             break;
         }
     }
+    // Add some extra delay for in case...
+    while (HAL_GetTick == entryTicks) {}
     #endif
 }
 

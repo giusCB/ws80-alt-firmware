@@ -75,6 +75,10 @@ void processLight()
     uint32_t ticks = g_rtcTicks;
     if (ticks - lastLightMeasurement >= lightInterval_rtc)
     {
+        #if 0
+        initLight();
+        lastLightMeasurement = ticks;
+        #else
         if (lightMeasurementAvailable())
         {
             LIGHT_PRINT("Measuring light. Interval: %d\r\n", ticks - lastLightMeasurement);
@@ -83,6 +87,14 @@ void processLight()
                 LIGHT_PRINT("Failed to read light!\r\n");
             lastLightMeasurement = ticks;
         }
+        else if (ticks - lastLightMeasurement >= lightInterval_rtc * 2)
+        {
+            LIGHT_PRINT("Light no measurement available!\r\n");
+            readPossibleLightInterface();
+            lastLightMeasurement = ticks;
+            lightInitialised = false;
+        };
+        #endif
         WaitForStop();
     }
 }
@@ -90,8 +102,8 @@ void processLight()
 bool lightMeasurementAvailable()
 {
     uint8_t mainStatusReg = readLightReg(0x07);
+    #if 0
     LIGHT_PRINT("Light status reg: %02x\r\n", mainStatusReg);
-    #ifdef DEBUG_LIGHT
     uint8_t controlReg = readLightReg(0x00);
     LIGHT_PRINT("Light control reg: %02x\r\n", controlReg);
     #endif
@@ -100,7 +112,8 @@ bool lightMeasurementAvailable()
 
 void readPossibleLightInterface()
 {
-    uint8_t buffer[10];
+    #ifdef DEBUG_LIGHT
+    uint8_t buffer[15];
     uint8_t devices[] = { lightAddress };
     for (int i = 0; i < sizeof(devices); i++)
     {
@@ -114,18 +127,22 @@ void readPossibleLightInterface()
         buffer[2] = SysTick->VAL;
         if (success)
         {
-            success = I2CReadFromAddress(device, buffer, 10);
+            success = I2CReadFromAddress(device, buffer, sizeof(buffer));
             LIGHT_PRINT("Write success. Read: (%d) "
-                "%02x %02x %02x %02x %02x %02x "
-                "%02x %02x %02x %02x\r\n",
+                "%02x %02x %02x %02x %02x    "
+                "%02x %02x %02x %02x %02x    "
+                "%02x %02x %02x %02x %02x \r\n",
                 success, buffer[0], buffer[1], buffer[2],
                 buffer[3], buffer[4], buffer[5],
                 buffer[6], buffer[7], buffer[8],
-                buffer[9]);
+                buffer[9], buffer[10], buffer[11],
+                buffer[12], buffer[13], buffer[14]
+            );
         }
         else
             LIGHT_PRINT("Write fail.\r\n");
     }
+    #endif
 }
 
 bool writeLightReg(uint8_t addr, uint8_t val)
@@ -133,16 +150,25 @@ bool writeLightReg(uint8_t addr, uint8_t val)
     uint8_t buffer[2];
     buffer[0] = addr;
     buffer[1] = val;
-    return I2CWriteToAddress(lightAddress, buffer, 2);
+    bool ret = I2CWriteToAddress(lightAddress, buffer, 2);
+    if (!ret)
+        LIGHT_PRINT("Failed to write light register %02x = %02x", addr, val);
+    return ret;
 }
 
 uint8_t readLightReg(uint8_t addr)
 {
     if (!I2CWriteToAddress(lightAddress, &addr, 1))
+    {
+        LIGHT_PRINT("Failed to set light reg address %02x\r\n", addr);
         return 0;
+    }
     uint8_t ret;
     if (!I2CReadFromAddress(lightAddress, &ret, 1))
+    {
+        LIGHT_PRINT("Failed to read light reg address %02x\r\n", addr);
         return 0;
+    }
     return ret;
 }
 
@@ -159,9 +185,7 @@ bool readLightVal(uint32_t* ret)
         LIGHT_PRINT("Failed to receive light data!\r\n");
         return false;
     }
-    #ifdef DEBUG_LIGHT
     return true;
-    #endif
 }
 
 void sleepLight()
@@ -189,9 +213,9 @@ bool readLight()
 
 bool initLight()
 {
-    // What about a reset?
-
-
+    writeLightReg(0x00, 0x10); // reset
+    HAL_Delay(1);
+    
     // We're only going to support the Broadcom APDS9922 (or similar)
     // ALS_MEAS_RATE.
     // Set the measurement rate to once every 2s, 20 bit resolution
@@ -214,6 +238,7 @@ bool initLight()
     // Start the sensor
     if (!writeLightReg(0x00, 0x02))
         return false;
+    wait_for_continue();
     LIGHT_PRINT("lightPartId: %02x\r\n", lightPartId);
     
     WaitForStop();

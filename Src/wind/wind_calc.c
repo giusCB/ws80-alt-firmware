@@ -11,9 +11,11 @@
 #include "fast_math_functions.h"
 #include <math.h>
 
-#define SAMPLE_BUFFER_SIZE 60
+//#define SAMPLE_BUFFER_SIZE 60
+#ifdef DEBUG_WIND
 #define DEBUG_CALC_WIND
 #define DEBUG_PROC_WIND
+#endif
 
 #ifdef DEBUG_CALC_WIND
 #define WIND_PRINT_CALC_WIND(...) WIND_PRINT(__VA_ARGS__)
@@ -28,6 +30,8 @@
 #define WIND_PRINT_PROC_WAVE(...) do {} while (0)
 #endif
 
+const uint8_t VectorSumSize = 4;
+
 // These are cos and sin with range -2048 -> +2048 == -2^11 -> + 2^11
 // Period is 24.5 samples.
 static int16_t sin24_5[49] = {0,519,1005,1425,1751,1963,2047,1997,1816,1516,1117,645,131,-391,-889,-1328,-1680,-1922,-2039,-2022,-1873,-1601,-1225,-769,-262,262,769,1225,1601,1873,2022,2039,1922,1680,1328,889,391,-131,-645,-1117,-1516,-1816,-1997,-2047,-1963,-1751,-1425,-1005,-519};
@@ -36,8 +40,12 @@ static int16_t cos24_5[49] = {2048,1981,1784,1471,1062,583,66,-456,-947,-1377,-1
 // double Hann(int i) => 2048 * Math.Sin(Math.PI * (i + 2) / (DataSize + 3)) * Math.Sin(Math.PI * (i + 2) / (DataSize + 3));
 static int16_t window[245] = {1,3,6,11,17,24,33,43,54,66,80,95,112,130,148,169,190,213,236,261,288,315,343,373,404,435,468,502,537,572,609,647,685,725,765,806,848,891,935,979,1024,1070,1116,1163,1210,1258,1307,1356,1405,1455,1505,1556,1607,1658,1710,1761,1813,1865,1917,1970,2022,2074,2126,2179,2231,2283,2335,2386,2438,2489,2540,2591,2641,2691,2740,2789,2838,2886,2933,2980,3026,3072,3117,3161,3205,3248,3290,3331,3371,3411,3449,3487,3524,3559,3594,3628,3661,3692,3723,3753,3781,3808,3835,3860,3883,3906,3927,3948,3966,3984,4001,4016,4030,4042,4053,4063,4072,4079,4085,4090,4093,4095,4096,4095,4093,4090,4085,4079,4072,4063,4053,4042,4030,4016,4001,3984,3966,3948,3927,3906,3883,3860,3835,3808,3781,3753,3723,3692,3661,3628,3594,3559,3524,3487,3449,3411,3371,3331,3290,3248,3205,3161,3117,3072,3026,2980,2933,2886,2838,2789,2740,2691,2641,2591,2540,2489,2438,2386,2335,2283,2231,2179,2126,2074,2022,1970,1917,1865,1813,1761,1710,1658,1607,1556,1505,1455,1405,1356,1307,1258,1210,1163,1116,1070,1024,979,935,891,848,806,765,725,685,647,609,572,537,502,468,435,404,373,343,315,288,261,236,213,190,169,148,130,112,95,80,66,54,43,33,24,17,11,6,3,1};
 
-static int16_t s_samples[SAMPLE_BUFFER_SIZE][2];
-static uint8_t s_sample_write_idx;
+static int16_t lastSampleX, lastSampleY;
+static int32_t spdVectorSumX, spdVectorSumY;
+static int32_t dirVectorSumX, dirVectorSumY;
+static uint32_t spdSum;
+static uint16_t maxSpd;
+uint16_t spdVectorSumCnt, dirVectorSumCnt, spdSumCnt;
 
 typedef int16_t q2_13, q1_14;
 typedef int32_t q18_13, q17_14;
@@ -61,6 +69,31 @@ q1_14 s_tangentVectors[6][2] =
   {  qn_14_sqrt1_2, -qn_14_sqrt1_2 } ,
   {  qn_14_sqrt1_2,  qn_14_sqrt1_2 } };
 
+//From https://stackoverflow.com/a/51585204/4648936
+// FastIntSqrt is based on Wikipedia article:
+// https://en.wikipedia.org/wiki/Methods_of_computing_square_roots
+// Which involves Newton's method which gives the following iterative formula:
+//
+// X(n+1) = (X(n) + S/X(n))/2
+//
+// Thanks to ARM CLZ instruction (which counts how many bits in a number are
+// zeros starting from the most significant one) we can very successfully
+// choose the starting value, so just three iterations are enough to achieve
+// maximum possible error of 1. The algorithm uses division, but fortunately
+// it is fast enough here, so square root computation takes only about 50-55
+// cycles with maximum compiler optimization.
+uint32_t FastIntSqrt (uint32_t value)
+{
+    if (!value)
+        return 0;
+
+    uint32_t xn = 1 << ((32 - __CLZ (value))/2);
+    xn = (xn + value/xn)/2;
+    xn = (xn + value/xn)/2;
+    xn = (xn + value/xn)/2;
+    return xn;
+}
+
   void print_wind_calc_debug()
 {
     WIND_PRINT("Wind calc:\r\n");
@@ -78,9 +111,8 @@ q1_14 s_tangentVectors[6][2] =
         g_signalPowers[3][0], g_signalPowers[3][1],
         g_signalPowers[4][0], g_signalPowers[4][1],
         g_signalPowers[5][0], g_signalPowers[5][1]);
-    uint8_t read_idx = (s_sample_write_idx + 1) % SAMPLE_BUFFER_SIZE;
     WIND_PRINT("Last Sample: %d, %d\r\n\r\n",
-        s_samples[read_idx][0], s_samples[read_idx][1]);
+        lastSampleX, lastSampleY);
 }
 
 q18_13 normalise_angle(q18_13 angle);
@@ -159,7 +191,7 @@ void processWindWaveform(uint8_t channel, uint8_t direction)
     double phase = atan2(sinSum, cosSum);
     q2_13 slowPhase = (phase * (1 << 13));
 
-    WIND_PRINT_PROC_WAVE("Quick phase: %d (%x), long phase: %d (%x)\r\n", phaseQ, phaseQ, slowPhase, slowPhase);
+    WIND_PRINT_PROC_WAVE("Quick phase: %d (%x), slow phase: %d (%x)\r\n", phaseQ, phaseQ, slowPhase, slowPhase);
     #endif
     //s_signalPhases[channel][direction] = phase * (1 << 13); // phase maximum +/- pi, this has maximum value +/- 2^15
     
@@ -296,16 +328,32 @@ int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns)
 
 void store_wind_sample(int16_t x_cmps, int16_t y_cmps)
 {
-    s_samples[s_sample_write_idx][0] = x_cmps;
-    s_samples[s_sample_write_idx][1] = y_cmps;
+    lastSampleX = x_cmps;
+    lastSampleY = y_cmps;
     
-    if (s_sample_write_idx == 0)
-        s_sample_write_idx = SAMPLE_BUFFER_SIZE - 1;
-    else
-        s_sample_write_idx--;
+    dirVectorSumX += x_cmps;
+    dirVectorSumY += y_cmps;
+    dirVectorSumCnt++;
+
+    spdVectorSumX += x_cmps;
+    spdVectorSumCnt += y_cmps;
+    spdVectorSumCnt++;
+    if (spdVectorSumCnt >= VectorSumSize)
+    {
+        dirVectorSumX /= spdVectorSumCnt;
+        dirVectorSumY /= spdVectorSumCnt;
+        uint16_t spd = FastIntSqrt(dirVectorSumX * dirVectorSumX + dirVectorSumY * dirVectorSumY);
+        spdSum += spd;
+        if (spd > maxSpd)
+            maxSpd = spd;
+        spdSumCnt++;
+        spdVectorSumX = 0;
+        spdVectorSumY = 0;
+        spdVectorSumCnt = 0;
+    }
 }
 
-void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount)
+/*void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount)
 {
     int32_t sum_x = 0;
     int32_t sum_y = 0;
@@ -317,39 +365,44 @@ void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount)
     }
     *x_cmps = sum_x / sampleCount;
     *y_cmps = sum_y / sampleCount;
-}
-
-uint16_t get_gust()
-{
-    uint32_t cur = 0;
-    uint32_t max = 0;
-    uint8_t start = s_sample_write_idx == 0 ? SAMPLE_BUFFER_SIZE - 1 : s_sample_write_idx - 1;
-    for (uint8_t i = start; i != s_sample_write_idx; 
-        i = i == 0 ? SAMPLE_BUFFER_SIZE - 1 : i - 1)
-    {
-        int16_t x = s_samples[i][0];
-        int16_t y = s_samples[i][1];
-        uint32_t mag = sqrt(x * x + y * y); // Consider if we can remove this sqrt.
-        // 4 sample exponential moving average
-        cur = cur * 3 / 4 + mag;
-        if (cur > max)
-            max = cur;
-    }
-    return max / 4;
-}
+}*/
 
 void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pAngle_deg)
 {
-    int16_t x_cmps, y_cmps, gust_cmps;
-    get_average_wind(&x_cmps, &y_cmps, 19);
-    gust_cmps = get_gust();
-    *pAvg_dmps = sqrt(x_cmps * x_cmps + y_cmps * y_cmps) / 10;
-    *pGust_dmps = gust_cmps / 10;
-    double angle_rad = atan2(x_cmps, y_cmps);
-    int16_t angle_deg = angle_rad * (180 / 3.141259);
-    if (angle_deg < 0)
-        angle_deg += 360;
-    *pAngle_deg = angle_deg;
-    WIND_PRINT("Wind parameters. Dir: %d, Avg: %d, gust: %d",
-        *pAngle_deg, *pAvg_dmps, *pGust_dmps);
+    const int32_t qRadsToDeg = (180 << 6) / 3.14159265;
+
+    if (spdSumCnt > 0)
+        *pAvg_dmps = spdSum / (spdSumCnt * 10);
+    else
+        *pAvg_dmps = 0;
+    *pGust_dmps = maxSpd / 10;
+    q15_t angleQ_rad;
+    if (dirVectorSumCnt > 0 && (dirVectorSumX > 0 || dirVectorSumY > 0))
+    {
+        arm_atan2_q15(dirVectorSumX / dirVectorSumCnt, dirVectorSumY / dirVectorSumCnt, &angleQ_rad);
+        int16_t angle_deg = (angleQ_rad * qRadsToDeg) >> 21;
+        while (angle_deg < 0)
+            angle_deg += 360;
+        *pAngle_deg = angle_deg;
+    }
+    else
+        *pAngle_deg = 0;
+
+    
+    #ifdef DEBUG_WIND
+    double slow_angle_rad = atan2(dirVectorSumX, dirVectorSumY);
+    int16_t slow_angle_deg = slow_angle_rad * (180 / 3.141259);
+    if (slow_angle_deg < 0)
+        slow_angle_deg += 360;
+    WIND_PRINT("Wind direction fast: %d, slow: %d\r\n", *pAngle_deg, slow_angle_deg);
+    #endif
+
+    WIND_PRINT("Wind parameters. Dir: %d (%d), Avg: %d (%d), gust: %d",
+        *pAngle_deg, dirVectorSumCnt, *pAvg_dmps, spdSumCnt, *pGust_dmps);
+
+    spdSum = 0;
+    spdSumCnt = 0;
+    dirVectorSumCnt = 0;
+    dirVectorSumX = 0;
+    dirVectorSumY = 0;
 }

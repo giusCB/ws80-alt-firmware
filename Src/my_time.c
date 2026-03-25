@@ -257,10 +257,10 @@ void preparePinsForStop()
     HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
 
     // B12: Radio interrupt.
-    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    /*GPIO_InitStruct.Pin = GPIO_PIN_12;
     GPIO_InitStruct.Mode = MODE_ANALOG;
     GPIO_InitStruct.Pull = 0;
-    HAL_GPIO_Init(GPIOB,&GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOB,&GPIO_InitStruct);*/
 
     // All C pins
     GPIO_InitStruct.Pin = GPIO_PIN_15|GPIO_PIN_14|GPIO_PIN_13|GPIO_PIN_12|GPIO_PIN_11|GPIO_PIN_10|GPIO_PIN_9|GPIO_PIN_7|GPIO_PIN_6|GPIO_PIN_5|GPIO_PIN_4|GPIO_PIN_3|GPIO_PIN_2|GPIO_PIN_1|GPIO_PIN_0;
@@ -288,11 +288,7 @@ void resumePinsAfterStop()
     // Radio interrupt is handled by our radio code.
 
       /*Configure GPIO pins : radio_fifo_Pin radio_reg_Pin radio_clk_Pin */
-    GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+    
 
     // C pins are handled by our radio code?
 

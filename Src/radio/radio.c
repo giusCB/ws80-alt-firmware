@@ -28,6 +28,8 @@ void radio_configure_payload(void);
 void radio_prepare_tx(void);
 void radio_TX_DONE_CLR(void);
 void radio_undocumented_CUS_CMT4_TX8_9(uint8_t idx);
+void radioPinsOn();
+void radioPinsOff();
 
 uint8_t readReg(uint8_t addr)
 {
@@ -38,6 +40,7 @@ uint8_t readReg(uint8_t addr)
 
 void configure_radio(bool first_init,uint16_t frequency_selector)
 {
+  radioPinsOn();
     uint8_t tmp;
     uint16_t i;
   
@@ -115,6 +118,7 @@ void radio_configure_payload(void)
 
 void test_radio()
 {
+  radioPinsOn();
     radio_prepare_tx();
     radio_undocumented_CUS_CMT4_TX8_9(0x14);
     uint32_t entryTicks = g_rtcTicks;
@@ -130,17 +134,46 @@ void sleep_radio()
   CMT2300A_GoSleep();
 }
 
+void radioPinsOn()
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  // Turn on our interrupt pin
+  // We control it here because leaving the interrupt on during stop mode consumes 100uA.
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  GPIO_InitStruct.Pin = radio_int_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  __HAL_GPIO_EXTI_CLEAR_IT(radio_int_Pin);
+  HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+}
+
+void radioPinsOff()
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  
+  // Turn off our interrupt pin:
+  GPIO_InitStruct.Pin = radio_int_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+
+  //Turn off our data pins
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC,&GPIO_InitStruct);
+}
+
 void radio_transmit(void* data, uint8_t len)
 {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    // Turn on our interrupt pin
-    // We control it here because leaving the interrupt on during stop mode consumes 100uA.
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    GPIO_InitStruct.Pin = radio_int_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    __HAL_GPIO_EXTI_CLEAR_IT(radio_int_Pin);
-    HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+    radioPinsOn();
 
     radio_prepare_tx();
     radio_undocumented_CUS_CMT4_TX8_9(25);
@@ -170,11 +203,8 @@ void radio_transmit(void* data, uint8_t len)
     else
         configure_radio(false, g_frequencySelector);
     RADIO_PRINT("Radio Tx Done\r\n");
-    // Turn off our interrupt pin:
-    GPIO_InitStruct.Pin = radio_int_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(radio_int_GPIO_Port, &GPIO_InitStruct);
+
+    radioPinsOff();
 }
 
 void EXTI15_10_IRQHandler(void)

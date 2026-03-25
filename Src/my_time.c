@@ -18,6 +18,7 @@ extern RTC_HandleTypeDef hrtc;
 
 volatile uint32_t g_rtcTicks = 0;
 volatile bool asleep;
+void DoRestoreClocks(uint32_t old_rcc_cfgr);
 
 #ifdef DEBUG
 volatile bool g_canStop = false;
@@ -388,12 +389,34 @@ void stop_until_event(bool restoreClocks)
 
     if (restoreClocks)
     {
-        RCC->CR |= RCC_CR_HSEON | RCC_CR_HSION | RCC_CR_PLLON;
-        while (!(RCC->CR & RCC_CR_HSERDY));
-        while (!(RCC->CR & RCC_CR_PLLRDY));
-        while (!(RCC->CR & RCC_CR_HSIRDY));
-        RCC->CFGR = old_rcc_cfgr;
+        DoRestoreClocks(old_rcc_cfgr);
     }
+}
+
+void DoRestoreClocks(uint32_t old_rcc_cfgr)
+{
+    uint32_t clocks = RCC_CR_HSION | RCC_CR_PLLON;
+    uint32_t requiredReady = RCC_CR_HSIRDY | RCC_CR_PLLRDY;
+    #ifdef USE_HSE
+    clocks |= RCC_CR_HSEON;
+    requiredReady |= RCC_CR_HSERDY;
+    #endif
+    RCC->CR |= clocks;
+    do
+    {
+        // The HSE takes half a millisecond to startup.
+        // However, at this point we are on MSI and only consuming <1mA.
+        // Testing suggests that using HSI instead of USE reduces power consumption by 0.1 mA on average (>10%)
+        #ifdef USE_HSE
+        if (RCC->CR & RCC_CR_HSERDY)
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 << 16);
+        #endif
+        if (RCC->CR & RCC_CR_PLLRDY)
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_11 << 16);
+        if (RCC->CR & RCC_CR_HSIRDY)
+            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
+    } while ((RCC-> CR & requiredReady) != requiredReady);
+    RCC->CFGR = old_rcc_cfgr;
 }
 
 void wait_until_alarm_stopped()
@@ -426,19 +449,7 @@ void wait_until_alarm_stopped()
     }
     DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12);
     // STOP mode changed us to MSI instead of HSE. change it back:
-    RCC->CR |= RCC_CR_HSEON | RCC_CR_HSION | RCC_CR_PLLON;
-    do
-    {
-        // The HSE takes half a millisecond to startup.
-        // However, at this point we are on MSI and only consuming <1mA.
-        if (RCC->CR & RCC_CR_HSERDY)
-            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_10 << 16);
-        if (RCC->CR & RCC_CR_PLLRDY)
-            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_11 << 16);
-        if (RCC->CR & RCC_CR_HSIRDY)
-            DEBUG_POWER(GPIOC->BSRR = GPIO_PIN_12 << 16);
-    } while ((RCC-> CR & (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY)) != (RCC_CR_HSIRDY | RCC_CR_PLLRDY | RCC_CR_HSERDY));
-    RCC->CFGR = old_rcc_cfgr;
+    DoRestoreClocks(old_rcc_cfgr);
 
     //HAL_RTC_DeactivateAlarm(&hrtc, RTC_CR_ALRAE);
 }

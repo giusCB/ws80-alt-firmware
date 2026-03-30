@@ -201,24 +201,28 @@ void timePrintDebug()
 
 timeMeasurementTypdef measureTime()
 {
-    timeMeasurementTypdef ret;
     #ifdef DEBUG_TIME
+    timeMeasurementTypdef ret;
     ret.millis1024 = millis1024();
     ret.ticks = HAL_GetTick();
     ret.systick = SysTick->VAL;
     ret.timeAsleep = time_asleep;
+    #else
+    timeMeasurementTypdef ret = {0};
     #endif
     return ret;
 }
 
 timeDifferenceTypedef subtractTimes(timeMeasurementTypdef t1, timeMeasurementTypdef t2)
 {
-    timeDifferenceTypedef ret;
     #ifdef DEBUG
+    timeDifferenceTypedef ret;
     ret.millis = (1024 + t1.millis1024 - t2.millis1024) % 1024;
     
     ret.cycles = (t1.ticks - t2.ticks) * SysTick->LOAD + t2.systick - t1.systick;
     ret.timeAsleep = t1.timeAsleep - t2.timeAsleep;
+    #else
+    timeDifferenceTypedef ret = {0};
     #endif
     return ret;
 }

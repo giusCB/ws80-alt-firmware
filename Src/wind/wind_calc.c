@@ -9,12 +9,14 @@
 #include "temperature.h"
 #include "arm_math.h"
 #include "fast_math_functions.h"
+#include "stm32l1xx_hal_flash_ex.h"
+#include "crc.h"
 #include <math.h>
 
 //#define SAMPLE_BUFFER_SIZE 60
 #ifdef DEBUG_WIND
-#define DEBUG_CALC_WIND
-#define DEBUG_PROC_WIND
+//#define DEBUG_CALC_WIND
+//#define DEBUG_PROC_WIND
 #endif
 
 #ifdef DEBUG_CALC_WIND
@@ -51,6 +53,15 @@ typedef int16_t q2_13, q1_14;
 typedef int32_t q18_13, q17_14;
 #define qn_13_pi 25736
 q2_13 s_signalPhases[6][2];
+struct calibrationStruct
+{
+    q2_13 phases[6];
+    uint8_t crc;
+};
+struct calibrationStruct s_calibrationData;
+
+q18_13 s_calibrationPhaseSums[6];
+uint8_t s_calibrationCount;
 
 #define qn_14_sqrt1_2 11585 // sqrt(1/2)
 #define qn_14_one 16384
@@ -68,6 +79,15 @@ q1_14 s_tangentVectors[6][2] =
   {  0      ,  qn_14_one     } ,
   {  qn_14_sqrt1_2, -qn_14_sqrt1_2 } ,
   {  qn_14_sqrt1_2,  qn_14_sqrt1_2 } };
+
+q18_13 normalise_angle(q18_13 angle);
+void get_radius_vector_cmps(int16_t* x_cmps, int16_t* y_cmps, q18_13 phaseDiff, uint8_t channel);
+int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns);
+void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount);
+uint16_t get_gust();
+void WriteEEPROM(uint16_t biasAddress, void* data, uint16_t len);
+void readEEPROM(uint16_t biasAddress, void* data, uint16_t len);
+void storeCalibration();
 
 //From https://stackoverflow.com/a/51585204/4648936
 // FastIntSqrt is based on Wikipedia article:
@@ -114,12 +134,6 @@ uint32_t FastIntSqrt (uint32_t value)
     WIND_PRINT("Last Sample: %d, %d\r\n\r\n",
         lastSampleX, lastSampleY);
 }
-
-q18_13 normalise_angle(q18_13 angle);
-void get_radius_vector_cmps(int16_t* x_cmps, int16_t* y_cmps, q18_13 phaseDiff, uint8_t channel);
-int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns);
-void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount);
-uint16_t get_gust();
 
 void processWindWaveform(uint8_t channel, uint8_t direction)
 {
@@ -224,7 +238,7 @@ void calculate_wind(int16_t *x_cmps, int16_t *y_cmps)
     for (uint8_t channel = 0; channel < 6; channel++)
     {
         q18_13 phaseDiff = normalise_angle(
-            (q18_13)s_signalPhases[channel][0] - s_signalPhases[channel][1]);
+            (q18_13)s_signalPhases[channel][0] - s_signalPhases[channel][1] - s_calibrationData.phases[channel]);
         signalPhaseDiffs[channel] = phaseDiff; // maximum 2^15
     }
     uint32_t best_residual = 0xFFFFFFFF;
@@ -336,13 +350,13 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps)
     dirVectorSumCnt++;
 
     spdVectorSumX += x_cmps;
-    spdVectorSumCnt += y_cmps;
+    spdVectorSumY += y_cmps;
     spdVectorSumCnt++;
     if (spdVectorSumCnt >= VectorSumSize)
     {
-        dirVectorSumX /= spdVectorSumCnt;
-        dirVectorSumY /= spdVectorSumCnt;
-        uint16_t spd = FastIntSqrt(dirVectorSumX * dirVectorSumX + dirVectorSumY * dirVectorSumY);
+        spdVectorSumX /= spdVectorSumCnt;
+        spdVectorSumY /= spdVectorSumCnt;
+        uint16_t spd = FastIntSqrt(spdVectorSumX * spdVectorSumX + spdVectorSumY * spdVectorSumY);
         spdSum += spd;
         if (spd > maxSpd)
             maxSpd = spd;
@@ -351,6 +365,8 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps)
         spdVectorSumY = 0;
         spdVectorSumCnt = 0;
     }
+    WIND_PRINT("Store wind sample. (%d, %d), dirSum: (%ld, %ld, %d), spdSum: (%ld, %ld, %d), Spd: (%ld, %d)\r\n", 
+        x_cmps, y_cmps, dirVectorSumX, dirVectorSumY, dirVectorSumCnt, spdVectorSumX, spdVectorSumY, spdVectorSumCnt, spdSum, spdSumCnt);
 }
 
 /*void get_average_wind(int16_t *x_cmps, int16_t *y_cmps, uint8_t sampleCount)
@@ -369,18 +385,21 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps)
 
 void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pAngle_deg)
 {
-    const int32_t qRadsToDeg = (180 << 6) / 3.14159265;
+    const int32_t qRadsToDeg = 3667; // = (180 << 6) / 3.14159265;
+
+    WIND_PRINT("Wind Direction Sum: (%d, %d, %d) (%d, %d)\r\n", dirVectorSumX, dirVectorSumY, dirVectorSumCnt, dirVectorSumX / dirVectorSumCnt, dirVectorSumY / dirVectorSumCnt);
 
     if (spdSumCnt > 0)
-        *pAvg_dmps = spdSum / (spdSumCnt * 10);
+        *pAvg_dmps = (spdSum + spdSumCnt * 5) / (spdSumCnt * 10);
     else
         *pAvg_dmps = 0;
     *pGust_dmps = maxSpd / 10;
-    q15_t angleQ_rad;
-    if (dirVectorSumCnt > 0 && (dirVectorSumX > 0 || dirVectorSumY > 0))
+    q2_13 angleQ_rad;
+    int16_t angle_deg;
+    if (dirVectorSumCnt > 0 && (dirVectorSumX != 0 || dirVectorSumY != 0))
     {
         arm_atan2_q15(dirVectorSumX / dirVectorSumCnt, dirVectorSumY / dirVectorSumCnt, &angleQ_rad);
-        int16_t angle_deg = (angleQ_rad * qRadsToDeg) >> 21;
+        angle_deg = (angleQ_rad * qRadsToDeg + (1 << 18)) >> 19;
         while (angle_deg < 0)
             angle_deg += 360;
         *pAngle_deg = angle_deg;
@@ -391,13 +410,13 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     
     #ifdef DEBUG_WIND
     double slow_angle_rad = atan2(dirVectorSumX, dirVectorSumY);
-    int16_t slow_angle_deg = slow_angle_rad * (180 / 3.141259);
+    int16_t slow_angle_deg = slow_angle_rad * (180 / 3.141259) + 0.5;
     if (slow_angle_deg < 0)
         slow_angle_deg += 360;
-    WIND_PRINT("Wind direction fast: %d, slow: %d\r\n", *pAngle_deg, slow_angle_deg);
+    WIND_PRINT("Wind direction raw: %d, fast: %d, slow: %d\r\n", angleQ_rad, angle_deg, slow_angle_deg);
     #endif
 
-    WIND_PRINT("Wind parameters. Dir: %d (%d), Avg: %d (%d), gust: %d",
+    WIND_PRINT("Wind parameters. Dir: %d (%d), Avg: %d (%d), gust: %d\r\n",
         *pAngle_deg, dirVectorSumCnt, *pAvg_dmps, spdSumCnt, *pGust_dmps);
 
     spdSum = 0;
@@ -406,3 +425,79 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     dirVectorSumX = 0;
     dirVectorSumY = 0;
 }
+
+void begin_calibration()
+{
+    memset(s_calibrationPhaseSums, 0, sizeof(s_calibrationPhaseSums));
+    s_calibrationCount = 0;
+}
+
+void store_calibration_sample()
+{
+    for (int i = 0; i < 6; i++)
+    {
+        s_calibrationPhaseSums[i] += normalise_angle(s_signalPhases[i][0] - s_signalPhases[i][1]);
+    }
+    s_calibrationCount++;
+}
+
+bool maybe_end_calibration()
+{
+    if ((s_calibrationCount & 0x0F) == 0)
+        WIND_PRINT("Calibration count: %d\r\n", s_calibrationCount);
+    if (s_calibrationCount < 200)
+        return false;
+    for (int i = 0; i < 6; i++)
+    {
+        s_calibrationData.phases[i] = s_calibrationPhaseSums[i] / s_calibrationCount;
+        WIND_PRINT("Calibration[%d] = %d\r\n", i, s_calibrationData.phases[i]);
+    }
+    wait_for_continue();
+    storeCalibration();
+    return true;
+}
+
+void storeCalibration()
+{
+    s_calibrationData.crc = crc8_dallas(&s_calibrationData, sizeof(s_calibrationData) - 1, 0xEE);
+    WriteEEPROM(0xa0, &s_calibrationData, sizeof(s_calibrationData));
+}
+
+void recallCalibration()
+{
+    WIND_PRINT("Recalling calibration from eeprom...\r\n");
+    wait_for_continue();
+    readEEPROM(0xa0, &s_calibrationData, sizeof(s_calibrationData));
+    uint8_t crc = crc8_dallas(&s_calibrationData, sizeof(s_calibrationData), 0xEE);
+    if (crc != 0)
+    {
+        WIND_PRINT("EEPROM Calibration data failed: %x\r\n", crc);
+        memset(&s_calibrationData, 0, sizeof(s_calibrationData));
+    }
+    else
+    {
+        WIND_PRINT("EEPROM Calibration data: %d, %d, %d, %d, %d, %d",
+            s_calibrationData.phases[0], s_calibrationData.phases[1], s_calibrationData.phases[2],
+            s_calibrationData.phases[3], s_calibrationData.phases[4], s_calibrationData.phases[5]);
+    }
+}
+
+void WriteEEPROM(uint16_t biasAddress, void* data, uint16_t len)
+{
+   uint16_t i;
+
+   __disable_irq();
+   HAL_FLASHEx_DATAEEPROM_Unlock();
+   for(i=0;i<len;i += 4)
+   {
+       HAL_FLASHEx_DATAEEPROM_Program(FLASH_TYPEPROGRAMDATA_HALFWORD, FLASH_EEPROM_BASE+biasAddress+i, *(uint32_t*)data);
+       data += 4;
+   }
+   HAL_FLASHEx_DATAEEPROM_Lock();
+   __enable_irq();
+ }
+
+ void readEEPROM(uint16_t biasAddress, void* data, uint16_t len)
+{
+   memcpy(data, (void*)(FLASH_EEPROM_BASE + biasAddress), len);
+ }

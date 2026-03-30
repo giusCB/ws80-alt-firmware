@@ -11,6 +11,7 @@
 #include "scope.h"
 #include "wind_calc.h"
 #include "debug.h"
+#include "light.h"
 
 volatile uint16_t* g_wind_measurement; //[WIND_SAMPLE_SIZE];
 
@@ -20,12 +21,13 @@ volatile uint16_t* g_wind_measurement; //[WIND_SAMPLE_SIZE];
 uint32_t g_signalPowers[6][2];
 uint8_t g_windRingCounts[6];
 
-static uint32_t s_last_wind_sample = 0xFFFF;;
+static uint32_t s_last_wind_sample = 0xFFFF;
+static bool s_calibrationRecallAttempted = false;
 
 uint8_t wind_sample_frequency = 4;
 const uint8_t max_volume = 12;
 
-void sample_wind();
+void sample_wind(bool calibrating);
 
 bool process_wind()
 {
@@ -36,16 +38,21 @@ bool process_wind()
     #endif
     uint32_t rtcTicksLocal = g_rtcTicks;
     uint8_t wind_sample_interval = WAKEUP_FREQUENCY / wind_sample_frequency;
-    if (rtcTicksLocal - s_last_wind_sample >= wind_sample_interval)
+    if ((rtcTicksLocal - s_last_wind_sample >= wind_sample_interval) || doContinuousMonitoring())
     {
         if (g_wind_init_required)
         {
             WIND_PRINT("Reinitialising wind.");
             InitScope();
         }
-        WIND_PRINT("Sampling Wind!\r\n");
+        if (!s_calibrationRecallAttempted)
+        {
+            recallCalibration();
+            s_calibrationRecallAttempted = true;
+        }
+        // WIND_PRINT("Sampling Wind!\r\n");
         s_last_wind_sample = rtcTicksLocal;
-        sample_wind();
+        sample_wind(false);
         return true;
     }
     return false;
@@ -60,7 +67,7 @@ const uint8_t g_channel_transducers[6][2] =
   { 2, 3 } };
 
 
-void sample_wind()
+void sample_wind(bool calibrating)
 {
     #ifdef DEBUG_WIND_TIME
     timeMeasurementTypdef entryMeas = measureTime();
@@ -71,11 +78,11 @@ void sample_wind()
     {
         for (uint8_t chan = 0; chan < 6; chan++)
         {
-            timeMeasurementTypdef preScope = measureTime();
+            ON_WIND_TIME(timeMeasurementTypdef preScope = measureTime());
             ProcessScope(chan, dir);
-            timeMeasurementTypdef between = measureTime();
+            ON_WIND_TIME(timeMeasurementTypdef between = measureTime());
             processWindWaveform(chan, dir);
-            timeMeasurementTypdef afterProcess = measureTime();
+            ON_WIND_TIME(timeMeasurementTypdef afterProcess = measureTime());
             #ifdef DEBUG_WIND_TIME
             measurementTime = addDiffs(measurementTime, subtractTimes(between, preScope));
             processTime = addDiffs(processTime, subtractTimes(afterProcess, between));
@@ -101,10 +108,14 @@ void sample_wind()
     entryMeas = measureTime();
     #endif
 
-    //updatePhysicalParamters();
-    int16_t x_cmps, y_cmps;
-    calculate_wind(&x_cmps, &y_cmps);
-    store_wind_sample(x_cmps, y_cmps);
+    if (!calibrating)
+    {
+        int16_t x_cmps, y_cmps;
+        calculate_wind(&x_cmps, &y_cmps);
+        store_wind_sample(x_cmps, y_cmps);
+    }
+    else
+        store_calibration_sample();
     adjustRingCounts();
 
     #ifdef DEBUG_WIND_TIME
@@ -116,6 +127,7 @@ void sample_wind()
 
 void printWindDebug()
 {
+    #ifdef DEBUG_WIND
     print_wind_phys_debug();
     print_wind_calc_debug();
     WIND_PRINT("Measurement: \r\n");
@@ -126,4 +138,19 @@ void printWindDebug()
             g_wind_measurement[idx + 0], g_wind_measurement[idx + 1], g_wind_measurement[idx + 2], g_wind_measurement[idx + 3],
             g_wind_measurement[idx + 4]);
     }
+    #endif
+}
+
+void calibrateWind()
+{
+    WIND_PRINT("Beginning calibration\r\n");
+    begin_calibration();
+    bool ledOn = true;
+    do
+    {
+        GPIOA->BSRR = 1 << (16 * ledOn);
+        ledOn = !ledOn;
+        sample_wind(true);
+    } while (!maybe_end_calibration());
+    GPIOA->BSRR = 1 << 16;
 }

@@ -129,22 +129,50 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  Test();
-  while(1);
+  //Test();
+  //while(1);
   while (1)
   {
     /* USER CODE END WHILE */
+    //debug_print("RTC Ticks: %ld\r\n", g_rtcTicks);
     processRadio();
-    process_wind();
     processLight();
     processBattery();
     ProcessTemperature();
-    stopLowPower();
+    process_wind();
+    if (!doContinuousMonitoring())
+      stopLowPower();
     //stop_until_event(true);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
+void check_calibration_A2()
+{
+  static uint16_t lowEntryMillis = 0;
+  static uint32_t lowEntryTicks = 0;
+  static bool lastState = true;
+  bool thisState = GPIOA->IDR & GPIO_PIN_2 != 0;
+  if (thisState == false && lastState == true)
+  {
+    // Button has just been depressed, record the time:
+    lowEntryMillis = millis1024();
+    lowEntryTicks = g_rtcTicks;
+    debug_print("Calibrate depressed: %d, %d\r\n", lowEntryMillis, lowEntryTicks);
+  }
+  else if (thisState == true && lastState == false)
+  {
+    debug_print("Calibrate released: %d, %d\r\n", millis1024(), g_rtcTicks);
+    // Button has just been released.
+    // Start a calibration if it was held for more than 0.1 seconds.
+    if (g_rtcTicks - lowEntryTicks > 2 ||
+        (lowEntryMillis + 1024 - millis1024()) % 1024 > 102)
+      calibrateWind();
+  }
+  lastState = thisState;
+}
+
 
 /**
   * @brief System Clock Configuration

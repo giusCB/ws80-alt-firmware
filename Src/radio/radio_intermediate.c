@@ -189,11 +189,13 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
     packet->pressure = 0;
     packet->crc1 = crc8_dallas(packet, sizeof(RadioPacketTypedef) - 2, 0x00);
     packet->chkSum = checksum(packet, sizeof(RadioPacketTypedef) - 1);
+    #ifdef DEBUG_RADIO
     RADIO_PRINT("Packet Contents: (%d)\r\n", sizeof(RadioPacketTypedef));
     uint8_t* p = (uint8_t*)packet;
     for (int i = 0; i < sizeof(RadioPacketTypedef); i++)
         RADIO_PRINT("%02x ", p[i]);
     RADIO_PRINT("\r\n");
+    #endif
 }
 
 bool processRadio()

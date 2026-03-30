@@ -45,3 +45,4 @@ void initWind();
 void printWindDebug();
 uint16_t get_gust();
 void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pAngle_deg);
+void calibrateWind();

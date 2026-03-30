@@ -19,6 +19,12 @@
 #define LIGHT_PRINT(...) do {} while (0)
 #endif
 
+#ifndef CONTINUOUS_LIGHT_THRESHOLD
+#define CONTINUOUS_LIGHT_THRESHOLD 3000
+#define LIGHT_AVERAGE_PERIOD1 600
+#define LIGHT_AVERAGE_PERIOD2 30
+#endif
+
 // veml7700 0x20
 
 // Si 1132, 1145/46/47 0xc0
@@ -51,10 +57,13 @@ uint8_t readLightReg(uint8_t addr);
 bool readLightVal(uint32_t* val);
 bool readLight();
 bool initLight();
+void updateAverageLight();
 
 const uint8_t lightAddress = 0xa6;
 uint8_t lightPartId;
 int16_t lightMeasurement;
+uint16_t lightAverage1;
+uint16_t lightAverage2;
 uint8_t uvMeasurement;
 bool lightInitialised;
 uint32_t lastLightMeasurement = 0xFFFF;
@@ -208,7 +217,23 @@ bool readLight()
     lightMeasurement = scaledLight / 40000;
     uvMeasurement = lightMeasurement / 1363;
     LIGHT_PRINT("Light: raw: %d, scaled: %d, final: %d, UV: %d\r\n", raw_light, scaledLight, lightMeasurement, uvMeasurement);
+    updateAverageLight();
     return true;
+}
+
+void updateAverageLight()
+{
+    const uint32_t denominator1 = LIGHT_AVERAGE_PERIOD1 / lightInterval_s;
+    lightAverage1 = (uint32_t)lightAverage1 * (denominator1 - 1) / denominator1 + lightMeasurement / denominator1;
+    const uint32_t denominator2 = LIGHT_AVERAGE_PERIOD2 / lightInterval_s;
+    lightAverage2 = (uint32_t)lightAverage2 * (denominator2 - 1) / denominator2 + lightMeasurement / denominator2;
+    LIGHT_PRINT("Light Avg1: %d, Avg2: %d\r\n", lightAverage1, lightAverage2);
+}
+
+bool doContinuousMonitoring()
+{
+    //LIGHT_PRINT("Continuous check: Avg1: %d, Avg2: %d\r\n", lightAverage1, lightAverage2);
+    return (lightAverage1 > CONTINUOUS_LIGHT_THRESHOLD) && (lightAverage2 > CONTINUOUS_LIGHT_THRESHOLD);
 }
 
 bool initLight()

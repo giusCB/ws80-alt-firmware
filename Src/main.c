@@ -69,7 +69,7 @@ static void MX_RTC_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-
+void check_calibration_A2();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -140,6 +140,7 @@ int main(void)
     processBattery();
     ProcessTemperature();
     process_wind();
+    check_calibration_A2();
     if (!doContinuousMonitoring())
       stopLowPower();
     //stop_until_event(true);
@@ -153,7 +154,8 @@ void check_calibration_A2()
   static uint16_t lowEntryMillis = 0;
   static uint32_t lowEntryTicks = 0;
   static bool lastState = true;
-  bool thisState = GPIOA->IDR & GPIO_PIN_2 != 0;
+  bool thisState = (GPIOA->IDR & GPIO_PIN_2) != 0;
+  //debug_print("GPIOA IDR: %lx MODER: %lx PUPDR: %lx\r\n", GPIOA->IDR, GPIOA->MODER, GPIOA->PUPDR);
   if (thisState == false && lastState == true)
   {
     // Button has just been depressed, record the time:

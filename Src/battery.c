@@ -76,11 +76,12 @@ void measureBattery()
     uint16_t batt_raw = ADC1->DR;
     // Turn off the ADC:
     ADC1->CR2 &= ~ADC_CR2_ADON;
-    // Set the battery switch analog:
-    // TODO: Change this to input pullup,
+    // Set the battery switch input pullup,
     // because it's the calibration switch.
     GPIOA->MODER = (GPIOA->MODER & ~(3 << (battSwPin * 2))) 
-        | (MODE_ANALOG << (battSwPin * 2));
+        | (MODE_INPUT << (battSwPin * 2));
+    GPIOA->PUPDR = (GPIOA->PUPDR & ~(3 << (battSwPin * 2)))
+        | (GPIO_PULLUP << (battSwPin * 2));
     g_batteryMeasurement = batt_raw / 25;
     BATTERY_PRINT("Battery raw: %d, processed: %d\r\n", batt_raw, g_batteryMeasurement);
 }

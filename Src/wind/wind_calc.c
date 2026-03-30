@@ -49,13 +49,15 @@ static uint32_t spdSum;
 static uint16_t maxSpd;
 uint16_t spdVectorSumCnt, dirVectorSumCnt, spdSumCnt;
 
+const uint16_t calibrationAddress = 0xa4;
+
 typedef int16_t q2_13, q1_14;
 typedef int32_t q18_13, q17_14;
 #define qn_13_pi 25736
 q2_13 s_signalPhases[6][2];
-struct calibrationStruct
+__packed struct calibrationStruct
 {
-    q2_13 phases[6];
+    __aligned(2) q2_13 phases[6];
     uint8_t crc;
 };
 struct calibrationStruct s_calibrationData;
@@ -457,21 +459,36 @@ bool maybe_end_calibration()
     return true;
 }
 
+size_t calibration_data_size()
+{
+    return ((void*)&s_calibrationData.crc - (void*)s_calibrationData.phases) + 1;
+}
+
 void storeCalibration()
 {
-    s_calibrationData.crc = crc8_dallas(&s_calibrationData, sizeof(s_calibrationData) - 1, 0xEE);
-    WriteEEPROM(0xa0, &s_calibrationData, sizeof(s_calibrationData));
+    s_calibrationData.crc = crc8_dallas(&s_calibrationData, calibration_data_size() - 1, 0xEE);
+    WIND_PRINT("CalibrationData: ");
+    uint8_t* p = (uint8_t*)&s_calibrationData;
+    for (int i = 0; i < calibration_data_size(); i++)
+        WIND_PRINT("%x ", p[i]);
+    WIND_PRINT("\r\n");
+    WriteEEPROM(calibrationAddress, &s_calibrationData, calibration_data_size());
 }
 
 void recallCalibration()
 {
     WIND_PRINT("Recalling calibration from eeprom...\r\n");
     wait_for_continue();
-    readEEPROM(0xa0, &s_calibrationData, sizeof(s_calibrationData));
-    uint8_t crc = crc8_dallas(&s_calibrationData, sizeof(s_calibrationData), 0xEE);
+    readEEPROM(calibrationAddress, &s_calibrationData, calibration_data_size());
+    uint8_t crc = crc8_dallas(&s_calibrationData, calibration_data_size(), 0xEE);
     if (crc != 0)
     {
         WIND_PRINT("EEPROM Calibration data failed: %x\r\n", crc);
+        WIND_PRINT("CalibrationData: ");
+        uint8_t* p = (uint8_t*)&s_calibrationData;
+        for (int i = 0; i < calibration_data_size(); i++)
+            WIND_PRINT("%x ", p[i]);
+        WIND_PRINT("\r\n");
         memset(&s_calibrationData, 0, sizeof(s_calibrationData));
     }
     else
@@ -486,15 +503,23 @@ void WriteEEPROM(uint16_t biasAddress, void* data, uint16_t len)
 {
    uint16_t i;
 
-   __disable_irq();
+   //__disable_irq();
    HAL_FLASHEx_DATAEEPROM_Unlock();
+   HAL_FLASHEx_DATAEEPROM_Program(
+    FLASH_TYPEPROGRAMDATA_WORD,
+    FLASH_EEPROM_BASE+biasAddress, 
+    *(uint32_t*)data);
    for(i=0;i<len;i += 4)
    {
-       HAL_FLASHEx_DATAEEPROM_Program(FLASH_TYPEPROGRAMDATA_HALFWORD, FLASH_EEPROM_BASE+biasAddress+i, *(uint32_t*)data);
+        WIND_PRINT("Writing %08lx to %08lx\r\n", *(uint32_t*)data, FLASH_EEPROM_BASE+biasAddress+i);
+       HAL_FLASHEx_DATAEEPROM_Program(
+        FLASH_TYPEPROGRAMDATA_WORD,
+        FLASH_EEPROM_BASE+biasAddress+i, 
+        *(uint32_t*)data);
        data += 4;
    }
    HAL_FLASHEx_DATAEEPROM_Lock();
-   __enable_irq();
+   //__enable_irq();
  }
 
  void readEEPROM(uint16_t biasAddress, void* data, uint16_t len)

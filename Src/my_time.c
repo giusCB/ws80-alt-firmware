@@ -255,8 +255,8 @@ void preparePinsForStop()
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    // A0, LED
-    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    // A0, LED. A2, calibration switch.
+    GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_2;
     GPIO_InitStruct.Mode = MODE_ANALOG;
     GPIO_InitStruct.Pull = 0;
     HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
@@ -288,6 +288,12 @@ void resumePinsAfterStop()
     GPIO_InitStruct.Pin = GPIO_PIN_0;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = 0;
+    HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
+
+    // A2, calibration
+    GPIO_InitStruct.Pin = GPIO_PIN_2;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOA,&GPIO_InitStruct);
 
     // Radio interrupt is handled by our radio code.

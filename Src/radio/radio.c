@@ -173,6 +173,7 @@ void radioPinsOff()
 
 void radio_transmit(void* data, uint8_t len)
 {
+  GPIOA->BSRR = 1 << 16;
     radioPinsOn();
 
     radio_prepare_tx();
@@ -205,6 +206,7 @@ void radio_transmit(void* data, uint8_t len)
     RADIO_PRINT("Radio Tx Done\r\n");
 
     radioPinsOff();
+  GPIOA->BSRR = 1;
 }
 
 void EXTI15_10_IRQHandler(void)

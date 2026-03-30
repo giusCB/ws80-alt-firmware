@@ -4,6 +4,9 @@
 #include "stm32l1xx_hal_gpio.h"
 #include "debug.h"
 
+__inline void cmt_spi3_delay(void);
+__inline void cmt_spi3_delay_us(void);
+
 #ifdef DEBUG_SPI
 #define SPI_PRINT(...) debug_print(__VA_ARGS__)
 #else

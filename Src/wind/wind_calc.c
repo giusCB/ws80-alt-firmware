@@ -331,7 +331,7 @@ int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns)
     int32_t speedOfSound_dmps = 3315 + (g_tempMeasurement * 61) / 100;
     int32_t effective_length_um;
     if (channel == 2 || channel == 3)
-        effective_length_um = 37000;
+        effective_length_um = 35700;
     else
         effective_length_um = 16000;
     // units: (dm * dm / um) / (s * s / ns) = (10^4m) / Gs? = 1E5 * m/s

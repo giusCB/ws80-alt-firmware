@@ -164,6 +164,10 @@ void CreateRadioPacket(RadioPacketTypedef *packet)
 {
     uint16_t avg_dmps, gust_dmps, angle_deg;
     get_wind_parameters(&avg_dmps, &gust_dmps, &angle_deg);
+    if (avg_dmps > 511)
+        avg_dmps = 511;
+    if (gust_dmps > 511)
+        gust_dmps = 511;
     int16_t tempPlus400 = g_tempMeasurement + 400;
 
     packet->b1 = 0x80;

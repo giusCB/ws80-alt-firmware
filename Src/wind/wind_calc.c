@@ -426,6 +426,7 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     dirVectorSumCnt = 0;
     dirVectorSumX = 0;
     dirVectorSumY = 0;
+    maxSpd = 0;
 }
 
 void begin_calibration()

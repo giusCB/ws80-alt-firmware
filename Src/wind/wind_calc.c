@@ -1,7 +1,8 @@
 /**
  * @file wind_calc.c
- * @brief Professional Ultrasonic Wind Calculation Module - Industrial Grade
- * Final Seal: Deterministic normalization, UB-free shifts, and geometric floor.
+ * @brief Professional Ultrasonic Wind Calculation Module - Industrial Hurricane Grade
+ * Final Implementation: 32-bit path, 64-bit intermediates, explicit output clamping,
+ * and deterministic math. Optimized for STM32L1 @ 40kHz transducers.
  */
 
 #include "wind_calc.h"
@@ -20,10 +21,9 @@ typedef int32_t q18_13, q17_14;
 
 /* --- 2. CONSTANTS & CONFIG --- */
 #define MEDIAN_WINDOW 7
-#define MAX_ACCEL_CMPS 2500  
+#define MAX_ACCEL_CMPS 2500
 #define qn_13_pi 25736
 #define qn_14_one 16384
-#define qn_14_sqrt1_2 11585
 
 /* --- 3. STATIC VARIABLES & STATE --- */
 static int16_t rawBufferX[MEDIAN_WINDOW];
@@ -33,8 +33,8 @@ static uint8_t medianIdx = 0;
 static bool bufferFull = false;
 static bool firstSampleReceived = false;
 
-static bool s_isCalibrating = false; 
-static uint16_t s_calibrationCount = 0; 
+static bool s_isCalibrating = false;
+static uint16_t s_calibrationCount = 0;
 
 const uint8_t VectorSumSize = 4;
 int16_t lastSampleX = 0, lastSampleY = 0;
@@ -60,11 +60,13 @@ void storeCalibration(void);
 void WriteEEPROM(uint16_t biasAddress, void* data, uint16_t len);
 void readEEPROM(uint16_t biasAddress, void* data, uint16_t len);
 q18_13 normalise_angle(q18_13 angle);
-void get_radius_vector_cmps(int16_t* x_cmps, int16_t* y_cmps, q18_13 phaseDiff, uint8_t channel);
-int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns);
+int32_t get_speed_cmps_32(uint8_t channel, int32_t timeDiff_ns);
 
 /* --- 5. SAFE MATH HELPERS --- */
 
+/**
+ * @brief Safe scaling to q15 avoiding Undefined Behavior on signed shifts.
+ */
 static q15_t safe_scale_to_q15(int32_t v, int8_t shift) {
     if (v == 0) return 0;
     int64_t mag = (v < 0) ? -(int64_t)v : (int64_t)v;
@@ -75,7 +77,6 @@ static q15_t safe_scale_to_q15(int32_t v, int8_t shift) {
 
 q18_13 normalise_angle(q18_13 angle) {
     int32_t period = 2 * qn_13_pi;
-    // Deterministic normalization using modulo to prevent CPU lockup on large offsets
     angle = ((angle + qn_13_pi) % period + period) % period - qn_13_pi;
     return angle;
 }
@@ -128,10 +129,7 @@ void processWindWaveform(uint8_t channel, uint8_t direction) {
         finalCos = safe_scale_to_q15(cosSum, shift);
         finalSin = safe_scale_to_q15(sinSum, shift);
     }
-
-    int32_t c32 = (int32_t)finalCos;
-    int32_t s32 = (int32_t)finalSin;
-    g_signalPowers[channel][direction] = (uint32_t)(c32 * c32 + s32 * s32);
+    g_signalPowers[channel][direction] = (uint32_t)((int32_t)finalCos * finalCos + (int32_t)finalSin * finalSin);
     arm_atan2_q15(finalSin, finalCos, &s_signalPhases[channel][direction]);
 }
 
@@ -140,34 +138,63 @@ void calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
     for (uint8_t ch = 0; ch < 6; ch++) {
         signalPhaseDiffs[ch] = normalise_angle((q18_13)s_signalPhases[ch][0] - s_signalPhases[ch][1] - s_calibrationData.phases[ch]);
     }
-    uint32_t best_res = 0xFFFFFFFF;
-    int16_t best_x = 0, best_y = 0;
 
-    for (int8_t ch2W = -1; ch2W <= 1; ch2W++) {
-        for (int8_t ch3W = -1; ch3W <= 1; ch3W++) {
+    // Physics Pre-calculation: v_s max ≈ 3800 dm/s @ +60°C -> vs_sq max ≈ 14.4M (safe in int32_t)
+    int32_t v_s = 3315 + (g_tempMeasurement * 61) / 100;
+    int32_t vs_sq = v_s * v_s;
+    int32_t k_short = vs_sq / 16000;
+    int32_t k_long  = vs_sq / 35700;
+
+    uint32_t best_res = 0xFFFFFFFF;
+    int32_t best_x = 0, best_y = 0;
+
+    for (int8_t ch2W = -3; ch2W <= 3; ch2W++) {
+        for (int8_t ch3W = -3; ch3W <= 3; ch3W++) {
             int32_t sum_x = 0, sum_y = 0;
-            int16_t rV[6][2];
+            int32_t current_rV[6][2];
+
             for (uint8_t ch = 0; ch < 6; ch++) {
                 q18_13 pD = signalPhaseDiffs[ch];
-                if (ch == 2) pD += 2 * qn_13_pi * ch2W;
-                if (ch == 3) pD += 2 * qn_13_pi * ch3W;
-                get_radius_vector_cmps(&rV[ch][0], &rV[ch][1], pD, ch);
-                sum_x += (int32_t)rV[ch][0]; sum_y += (int32_t)rV[ch][1];
+                if (ch == 2) pD += (q18_13)2 * qn_13_pi * ch2W;
+                if (ch == 3) pD += (q18_13)2 * qn_13_pi * ch3W;
+
+                int32_t delay_ns = (pD * 3900) >> 13;
+                int32_t k = (ch == 2 || ch == 3) ? k_long : k_short;
+
+                // Optimized 64-bit speed calculation to prevent overflow above 270 m/s
+                int32_t spd = (int32_t)(((int64_t)k * delay_ns) / 2000);
+
+                int32_t rV_x = (spd * s_radiusVectors[ch][0]) >> 14;
+                int32_t rV_y = (spd * s_radiusVectors[ch][1]) >> 14;
+
+                current_rV[ch][0] = rV_x;
+                current_rV[ch][1] = rV_y;
+                sum_x += rV_x; sum_y += rV_y;
             }
-            int16_t bX = (int16_t)(sum_x / 3), bY = (int16_t)(sum_y / 3);
+
+            int32_t bX = sum_x / 3;
+            int32_t bY = sum_y / 3;
             uint32_t res = 0;
+
             for (uint8_t ch = 0; ch < 6; ch++) {
-                int32_t dx = (int32_t)bX - rV[ch][0]; 
-                int32_t dy = (int32_t)bY - rV[ch][1];
+                int32_t dx = bX - current_rV[ch][0];
+                int32_t dy = bY - current_rV[ch][1];
                 int64_t dot_t = ((int64_t)dx * s_tangentVectors[ch][0] + (int64_t)dy * s_tangentVectors[ch][1]) >> 14;
                 int64_t diff = (int64_t)dx * dx + (int64_t)dy * dy - (dot_t * dot_t);
-                if (diff < 0) diff = 0; 
+                if (diff < 0) diff = 0;
                 res += (uint32_t)(diff >> 2);
             }
-            if (res < best_res) { best_res = res; best_x = bX; best_y = bY; }
+
+            if (res < best_res) {
+                best_res = res;
+                best_x = bX;
+                best_y = bY;
+            }
         }
     }
-    *x_cmps = best_x; *y_cmps = best_y;
+    // Explicit clamp to int16 range to prevent overflow artifacts in output
+    *x_cmps = (int16_t)(best_x > 32767 ? 32767 : (best_x < -32768 ? -32768 : best_x));
+    *y_cmps = (int16_t)(best_y > 32767 ? 32767 : (best_y < -32768 ? -32768 : best_y));
 }
 
 void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
@@ -189,7 +216,7 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
     }
     lastFilteredX = medX; lastFilteredY = medY;
     lastSampleX = medX; lastSampleY = medY;
-    
+
     dirVectorSumX += (int32_t)medX; dirVectorSumY += (int32_t)medY; dirVectorSumCnt++;
     spdVectorSumX += (int32_t)medX; spdVectorSumY += (int32_t)medY; spdVectorSumCnt++;
 
@@ -206,7 +233,7 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     if (spdSumCnt > 0) *pAvg_dmps = (uint16_t)((spdSum + (spdSumCnt * 5)) / (spdSumCnt * 10));
     else *pAvg_dmps = 0;
     *pGust_dmps = (uint16_t)(maxSpd / 10);
-    
+
     if (dirVectorSumCnt > 0 && (dirVectorSumX != 0 || dirVectorSumY != 0)) {
         int32_t avgX = dirVectorSumX / (int32_t)dirVectorSumCnt;
         int32_t avgY = dirVectorSumY / (int32_t)dirVectorSumCnt;
@@ -223,17 +250,10 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
     spdSum = 0; spdSumCnt = 0; dirVectorSumCnt = 0; dirVectorSumX = 0; dirVectorSumY = 0; maxSpd = 0;
 }
 
-int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns) {
+int32_t get_speed_cmps_32(uint8_t channel, int32_t timeDiff_ns) {
     int32_t v_s = 3315 + (g_tempMeasurement * 61) / 100;
     int32_t L = (channel == 2 || channel == 3) ? 35700 : 16000;
-    return (int16_t)(((v_s * v_s) / L) * timeDiff_ns / 2000);
-}
-
-void get_radius_vector_cmps(int16_t* x_cmps, int16_t* y_cmps, q18_13 phaseDiff, uint8_t channel) {
-    int32_t delay = (phaseDiff * 3900) >> 13;
-    int16_t spd = get_speed_cmps(channel, delay);
-    *x_cmps = (int16_t)((int32_t)spd * s_radiusVectors[channel][0] >> 14);
-    *y_cmps = (int16_t)((int32_t)spd * s_radiusVectors[channel][1] >> 14);
+    return (int32_t)(((int64_t)v_s * v_s / L) * timeDiff_ns / 2000);
 }
 
 uint32_t FastIntSqrt(uint32_t value) {
@@ -261,7 +281,7 @@ bool maybe_end_calibration(void) {
     if (!s_isCalibrating || s_calibrationCount < 200) return false;
     for (int i = 0; i < 6; i++) s_calibrationData.phases[i] = (int16_t)(s_calibrationPhaseSums[i] / (int32_t)s_calibrationCount);
     storeCalibration();
-    s_isCalibrating = false; 
+    s_isCalibrating = false;
     s_calibrationCount = 0;
     return true;
 }

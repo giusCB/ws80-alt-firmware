@@ -36,7 +36,7 @@ extern volatile uint32_t g_rtcTicks;
 #define HSITRIM_POS      __builtin_ctz(RCC_ICSCR_HSITRIM)
 #define HSITRIM_MAX      31U
 #define HSITRIM_MIN      0U
-#define HSITRIM_DEADBAND 500U // Adjusted for 32MHz tick resolution
+#define HSITRIM_DEADBAND 20U  // Tight tolerance for high-precision thermal tracking
 
 /* TIM5 OR register: bits [7:6] = TI4_RMP, value 0b11 = LSE (RM0038 Table 80) */
 #define TIM5_OR_TI4RMP_Pos  6U
@@ -177,7 +177,7 @@ bool Process_HSI_Calibration(TIM_HandleTypeDef *htim)
     is_first = true;
 
     uint32_t delta = cap - first_capture;
-    
+
     // FIX: Actual frequency uses HSI_TO_TIMCLK_RATIO because TIM5 runs at 32MHz
     g_hsi_actual_freq = ((float)delta * (float)LSE_FREQ_HZ) / (1024.0f * (float)HSI_TO_TIMCLK_RATIO);
 
@@ -371,7 +371,8 @@ static void MX_RTC_Init(void)
  * ---------------------------------------------------------------------------*/
 static void MX_TIM5_Init(void)
 {
-    TIM_IC_InitTypeDef sConfigIC = {0};
+	__HAL_RCC_TIM5_CLK_ENABLE();
+	TIM_IC_InitTypeDef sConfigIC = {0};
 
     htim5.Instance           = TIM5;
     htim5.Init.Prescaler     = 0;

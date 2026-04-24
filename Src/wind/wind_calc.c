@@ -1,8 +1,7 @@
 /**
  * @file wind_calc.c
  * @brief Professional Ultrasonic Wind Calculation Module - Industrial Grade
- * Final Revision: Zero Undefined Behavior (Safe Scaling), Orthogonal Vectors,
- * and Multi-level Protection against Math Overflows.
+ * Final Seal: Deterministic normalization, UB-free shifts, and geometric floor.
  */
 
 #include "wind_calc.h"
@@ -34,7 +33,6 @@ static uint8_t medianIdx = 0;
 static bool bufferFull = false;
 static bool firstSampleReceived = false;
 
-// Calibration State
 static bool s_isCalibrating = false; 
 static uint16_t s_calibrationCount = 0; 
 
@@ -67,32 +65,28 @@ int16_t get_speed_cmps(uint8_t channel, int32_t timeDiff_ns);
 
 /* --- 5. SAFE MATH HELPERS --- */
 
-/**
- * @brief Safe scaling to q15 avoiding Undefined Behavior on signed shifts.
- * Separates magnitude and sign to ensure standard compliance.
- */
 static q15_t safe_scale_to_q15(int32_t v, int8_t shift) {
     if (v == 0) return 0;
-    // Use 64-bit to safely handle abs(INT32_MIN)
     int64_t mag = (v < 0) ? -(int64_t)v : (int64_t)v;
     uint64_t scaled = (shift >= 0) ? ((uint64_t)mag << shift) : ((uint64_t)mag >> (-shift));
-
-    // Clamp to valid q15 range (32767)
     if (scaled > 32767ULL) scaled = 32767ULL;
     return (v < 0) ? -(q15_t)scaled : (q15_t)scaled;
+}
+
+q18_13 normalise_angle(q18_13 angle) {
+    int32_t period = 2 * qn_13_pi;
+    // Deterministic normalization using modulo to prevent CPU lockup on large offsets
+    angle = ((angle + qn_13_pi) % period + period) % period - qn_13_pi;
+    return angle;
 }
 
 /* --- 6. MATH TABLES & VECTORS --- */
 static int16_t sin24_5[49] = {0,519,1005,1425,1751,1963,2047,1997,1816,1516,1117,645,131,-391,-889,-1328,-1680,-1922,-2039,-2022,-1873,-1601,-1225,-769,-262,262,769,1225,1601,1873,2022,2039,1922,1680,1328,889,391,-131,-645,-1117,-1516,-1816,-1997,-2047,-1963,-1751,-1425,-1005,-519};
 static int16_t cos24_5[49] = {2048,1981,1784,1471,1062,583,66,-456,-947,-1377,-1716,-1944,-2044,-2010,-1845,-1559,-1172,-707,-197,327,829,1277,1641,1898,2031,2031,1898,1641,1277,829,327,-197,-707,-1172,-1559,-1845,-2010,-2044,-1944,-1716,-1377,-947,-456,66,583,1062,1471,1784,1981};
-static int16_t window[245] = {1,3,6,11,17,24,33,43,54,66,80,95,112,130,148,169,190,213,236,261,288,315,343,373,404,435,468,502,537,572,609,647,685,725,765,806,848,891,935,979,1024,1070,1116,1163,1210,1258,1307,1356,1405,1455,1505,1556,1607,1658,1710,1761,1813,1865,1917,1970,2022,2074,2126,2179,2231,2283,2335,2386,2438,2489,2540,2591,2641,2591,2540,2489,2438,2386,2335,2283,2231,2179,2126,2074,2022,1970,1917,1865,1813,1761,1710,1658,1607,1556,1505,1455,1405,1356,1307,1258,1210,1163,1116,1070,1024,979,935,891,848,806,765,725,685,647,609,572,537,502,468,435,404,373,343,315,288,261,236,213,190,169,148,130,112,95,80,66,54,43,33,24,17,11,6,3,1};
+static int16_t window[245] = {1,3,6,11,17,24,33,43,54,66,80,95,112,130,148,169,190,213,236,261,288,315,343,373,404,435,468,502,537,572,609,647,685,725,765,806,848,891,935,979,1024,1070,1116,1163,1210,1258,1307,1356,1405,1455,1505,1556,1607,1658,1710,1761,1813,1865,1917,1970,2022,2074,2126,2179,2231,2283,2335,2283,2231,2179,2126,2074,2022,1970,1917,1865,1813,1761,1710,1658,1607,1556,1505,1455,1405,1356,1307,1258,1210,1163,1116,1070,1024,979,935,891,848,806,765,725,685,647,609,572,537,502,468,435,404,373,343,315,288,261,236,213,190,169,148,130,112,95,80,66,54,43,33,24,17,11,6,3,1};
 
 q1_14 s_radiusVectors[6][2] = { { 11585, -11585 }, { -11585, -11585 }, { 0, -16384 }, { -16384, 0 }, { -11585, -11585 }, { 11585, -11585 } };
-/* FIXED: s_tangentVectors orthogonal to radiusVectors */
-q1_14 s_tangentVectors[6][2] = { 
-    { 11585, 11585 }, { 11585, -11585 }, { 16384, 0 }, 
-    { 0, 16384 }, { 11585, -11585 }, { 11585, 11585 } 
-};
+q1_14 s_tangentVectors[6][2] = { { 11585, 11585 }, { 11585, -11585 }, { 16384, 0 }, { 0, 16384 }, { 11585, -11585 }, { 11585, 11585 } };
 
 /* --- 7. CORE LOGIC --- */
 
@@ -124,9 +118,11 @@ void processWindWaveform(uint8_t channel, uint8_t direction) {
         sinSum += val * (int32_t)sin24_5[i % 49] >> 8;
     }
 
-    uint32_t maxVal = (uint32_t)(abs(cosSum) > abs(sinSum) ? abs(cosSum) : abs(sinSum));
-    q15_t finalCos = 0, finalSin = 0;
+    uint32_t uAbsCos = (cosSum < 0) ? (uint32_t)-cosSum : (uint32_t)cosSum;
+    uint32_t uAbsSin = (sinSum < 0) ? (uint32_t)-sinSum : (uint32_t)sinSum;
+    uint32_t maxVal = (uAbsCos > uAbsSin) ? uAbsCos : uAbsSin;
 
+    q15_t finalCos = 0, finalSin = 0;
     if (maxVal > 0) {
         int8_t shift = (int8_t)__builtin_clz(maxVal) - 17;
         finalCos = safe_scale_to_q15(cosSum, shift);
@@ -136,7 +132,6 @@ void processWindWaveform(uint8_t channel, uint8_t direction) {
     int32_t c32 = (int32_t)finalCos;
     int32_t s32 = (int32_t)finalSin;
     g_signalPowers[channel][direction] = (uint32_t)(c32 * c32 + s32 * s32);
-
     arm_atan2_q15(finalSin, finalCos, &s_signalPhases[channel][direction]);
 }
 
@@ -166,7 +161,7 @@ void calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
                 int32_t dy = (int32_t)bY - rV[ch][1];
                 int64_t dot_t = ((int64_t)dx * s_tangentVectors[ch][0] + (int64_t)dy * s_tangentVectors[ch][1]) >> 14;
                 int64_t diff = (int64_t)dx * dx + (int64_t)dy * dy - (dot_t * dot_t);
-                if (diff < 0) diff = 0; // Geometric floor
+                if (diff < 0) diff = 0; 
                 res += (uint32_t)(diff >> 2);
             }
             if (res < best_res) { best_res = res; best_x = bX; best_y = bY; }
@@ -217,7 +212,6 @@ void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pA
         int32_t avgY = dirVectorSumY / (int32_t)dirVectorSumCnt;
         uint32_t maxV = (uint32_t)(abs(avgX) > abs(avgY) ? abs(avgX) : abs(avgY));
         int8_t shift = (int8_t)__builtin_clz(maxV) - 17;
-        
         q15_t fY = safe_scale_to_q15(avgY, shift);
         q15_t fX = safe_scale_to_q15(avgX, shift);
         q15_t angleQ;
@@ -240,12 +234,6 @@ void get_radius_vector_cmps(int16_t* x_cmps, int16_t* y_cmps, q18_13 phaseDiff, 
     int16_t spd = get_speed_cmps(channel, delay);
     *x_cmps = (int16_t)((int32_t)spd * s_radiusVectors[channel][0] >> 14);
     *y_cmps = (int16_t)((int32_t)spd * s_radiusVectors[channel][1] >> 14);
-}
-
-q18_13 normalise_angle(q18_13 angle) {
-    while (angle < -qn_13_pi) angle += 2 * qn_13_pi;
-    while (angle > qn_13_pi)  angle -= 2 * qn_13_pi;
-    return angle;
 }
 
 uint32_t FastIntSqrt(uint32_t value) {

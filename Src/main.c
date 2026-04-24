@@ -6,6 +6,7 @@
  * - Replaced deprecated POSITION_VAL() with __builtin_ctz()
  * - Fixed TIM5_OR_TI4_RMP macros with raw bit values (RM0038)
  * - Added MX_TIM5_Init() + HSI background calibration loop
+ * - URGENT FIX: Corrected HSI target tick calculation (TIM5 runs at 32MHz via PLL, not 16MHz)
  */
 /* USER CODE END Header */
 
@@ -20,20 +21,24 @@
 #include "battery.h"
 #include <stdbool.h>
 
-/* --- HSI Calibration Constants (Hardware Trimming) --- */
-#define HSI_TARGET_FREQ             16000000U
+/* USER CODE BEGIN 0 */
+extern volatile uint32_t g_rtcTicks;
+/* USER CODE END 0 */
+
+/* --- HSI Calibration Constants (Hardware Trimming - PLL x2 FIXED) --- */
 #define LSE_FREQ_HZ                 32768U
-#define EXPECTED_TICKS_ACCUMULATED  500000U   /* 16MHz * 1024/32768 */
+#define HSI_TARGET_FREQ             16000000U
+#define HSI_TO_TIMCLK_RATIO         2U // The PLL doubles the HSI to 32MHz for TIM5
+#define EXPECTED_TICKS_ACCUMULATED  ((HSI_TARGET_FREQ * HSI_TO_TIMCLK_RATIO * 1024U) / LSE_FREQ_HZ) // 1.000.000
 #define TARGET_CAPTURES             128U
 
-/* FIX: Replaced deprecated POSITION_VAL() with portable __builtin_ctz() */
+/* Portable __builtin_ctz replaces deprecated POSITION_VAL() */
 #define HSITRIM_POS      __builtin_ctz(RCC_ICSCR_HSITRIM)
 #define HSITRIM_MAX      31U
 #define HSITRIM_MIN      0U
-#define HSITRIM_DEADBAND 10U
+#define HSITRIM_DEADBAND 500U // Adjusted for 32MHz tick resolution
 
-/* TIM5 OR register: bits [7:6] = TI4_RMP, value 0b11 = LSE (RM0038 Table 80)
- * FIX: Raw bit values replace missing TIM5_OR_TI4_RMP CMSIS macros */
+/* TIM5 OR register: bits [7:6] = TI4_RMP, value 0b11 = LSE (RM0038 Table 80) */
 #define TIM5_OR_TI4RMP_Pos  6U
 #define TIM5_OR_TI4RMP_Msk  (0x3U << TIM5_OR_TI4RMP_Pos)
 
@@ -72,10 +77,10 @@ void check_calibration_A2(void);
 void Start_HSI_Measurement(TIM_HandleTypeDef *htim);
 bool Process_HSI_Calibration(TIM_HandleTypeDef *htim);
 
-/* USER CODE BEGIN 0 */
+/* USER CODE BEGIN 1 */
 void Test(void);
 void InitScope(void);
-/* USER CODE END 0 */
+/* USER CODE END 1 */
 
 /* ---------------------------------------------------------------------------*/
 int main(void)
@@ -135,7 +140,7 @@ int main(void)
 }
 
 /* ---------------------------------------------------------------------------
- * HSI Calibration (non-blocking)
+ * HSI Calibration (non-blocking) - FIXED FOR PLL x2
  * ---------------------------------------------------------------------------*/
 void Start_HSI_Measurement(TIM_HandleTypeDef *htim)
 {
@@ -164,6 +169,7 @@ bool Process_HSI_Calibration(TIM_HandleTypeDef *htim)
         return false;
     }
 
+    // We capture every 8 LSE edges (due to prescaler). 128 captures = 1024 LSE edges.
     if (++capture_count < TARGET_CAPTURES)
         return false;
 
@@ -171,7 +177,9 @@ bool Process_HSI_Calibration(TIM_HandleTypeDef *htim)
     is_first = true;
 
     uint32_t delta = cap - first_capture;
-    g_hsi_actual_freq = ((float)delta * (float)LSE_FREQ_HZ) / 1024.0f;
+    
+    // FIX: Actual frequency uses HSI_TO_TIMCLK_RATIO because TIM5 runs at 32MHz
+    g_hsi_actual_freq = ((float)delta * (float)LSE_FREQ_HZ) / (1024.0f * (float)HSI_TO_TIMCLK_RATIO);
 
     uint32_t trim = (RCC->ICSCR & RCC_ICSCR_HSITRIM) >> HSITRIM_POS;
     if      (delta > EXPECTED_TICKS_ACCUMULATED + HSITRIM_DEADBAND && trim > HSITRIM_MIN) trim--;
@@ -360,7 +368,6 @@ static void MX_RTC_Init(void)
 
 /* ---------------------------------------------------------------------------
  * TIM5 — 32-bit Input Capture on LSE for HSI trimming
- * FIX: raw bit values instead of missing TIM5_OR_TI4_RMP CMSIS macros
  * ---------------------------------------------------------------------------*/
 static void MX_TIM5_Init(void)
 {

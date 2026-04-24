@@ -16,7 +16,7 @@ void configure_radio(bool first_init,uint16_t frequency_selector);
 void radio_transmit(void* data, uint8_t len);
 bool processRadio();
 
-#define RADIO_TX_PERIOD 4.75
+#define RADIO_TX_PERIOD 2.0
 
 #ifdef DEBUG_RADIO
 #define RADIO_PRINT(...) do { debug_print(__VA_ARGS__); } while (0)

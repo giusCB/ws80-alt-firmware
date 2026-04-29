@@ -7,6 +7,7 @@
  * - Fixed TIM5_OR_TI4_RMP macros with raw bit values (RM0038)
  * - Added MX_TIM5_Init() + HSI background calibration loop
  * - URGENT FIX: Corrected HSI target tick calculation (TIM5 runs at 32MHz via PLL, not 16MHz)
+ * - SINCRO FIX: HSI calibration runs synchronously and aborts safely before Stop Mode
  */
 /* USER CODE END Header */
 
@@ -107,35 +108,58 @@ int main(void)
     init_radio();
 
     static uint32_t lastCalTick  = 0;
-    bool            is_measuring = false;
+    bool            is_measuring_hsi = false;
 
     while (1)
     {
+        // 1. Processamento sequenziale dei sensori
         processRadio();
         processLight();
         processBattery();
         process_wind();
         ProcessTemperature();
+        check_calibration_A2();
 
-        /* HSI calibration: schedule every ~15 s (512 RTC ticks) */
+        // 2. Controllo e avvio della calibrazione HSI (ogni ~15s)
         if ((g_rtcTicks - lastCalTick) >= 512U)
         {
             lastCalTick = g_rtcTicks;
-            if (!is_measuring)
+            if (!is_measuring_hsi)
             {
                 Start_HSI_Measurement(&htim5);
-                is_measuring = true;
+                is_measuring_hsi = true;
             }
         }
 
-        if (is_measuring)
+        // 3. Esecuzione passo-passo della calibrazione HSI
+        if (is_measuring_hsi)
+        {
             if (Process_HSI_Calibration(&htim5))
-                is_measuring = false;
+            {
+                // La calibrazione è finita con successo
+                is_measuring_hsi = false;
+            }
+        }
 
-        check_calibration_A2();
+        // 4. Gestione del risparmio energetico e spegnimento timer
+        if (doContinuousMonitoring())
+        {
+            // Il sistema deve rimanere sempre sveglio, non facciamo nulla.
+        }
+        else
+        {
+            // Il sistema sta per entrare in Stop Mode.
+            // Fermiamo la calibrazione se era in corso per evitare problemi.
+            if (is_measuring_hsi)
+            {
+                HAL_TIM_IC_Stop(&htim5, TIM_CHANNEL_4);
+                __HAL_TIM_CLEAR_FLAG(&htim5, TIM_FLAG_CC4);
+                is_measuring_hsi = false;
+            }
 
-        if (!doContinuousMonitoring())
+            // Entriamo in Stop Mode
             stopLowPower();
+        }
     }
 }
 
@@ -174,7 +198,7 @@ bool Process_HSI_Calibration(TIM_HandleTypeDef *htim)
         return false;
 
     HAL_TIM_IC_Stop(htim, TIM_CHANNEL_4);
-    is_first = true;
+    is_first = true; // Si resetta per il prossimo ciclo completo
 
     uint32_t delta = cap - first_capture;
 

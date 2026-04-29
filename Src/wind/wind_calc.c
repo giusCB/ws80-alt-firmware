@@ -1,7 +1,7 @@
 /**
  * @file wind_calc.c
  * @brief Professional Ultrasonic Wind Calculation Module - Industrial Hurricane Grade
- * Final Implementation: 32-bit path, 64-bit intermediates, explicit output clamping,
+ * Final Implementation: 32-bit path, trimmed-mean filtering, early rejection,
  * and deterministic math. Optimized for STM32L1 @ 40kHz transducers.
  */
 
@@ -24,6 +24,9 @@ typedef int32_t q18_13, q17_14;
 #define MAX_ACCEL_CMPS 2500
 #define qn_13_pi 25736
 #define qn_14_one 16384
+// Soglia massima per il residuo geometrico. Se superata, il dato è considerato "spazzatura".
+// NOTA: Questo valore può essere "tweakato" in base ai test reali.
+#define MAX_VALID_RESIDUAL 150000
 
 /* --- 3. STATIC VARIABLES & STATE --- */
 static int16_t rawBufferX[MEDIAN_WINDOW];
@@ -91,9 +94,15 @@ q1_14 s_tangentVectors[6][2] = { { 11585, 11585 }, { 11585, -11585 }, { 16384, 0
 
 /* --- 7. CORE LOGIC --- */
 
-static int16_t get_median_7(int16_t *data) {
+/**
+ * @brief Filtro a Media Troncata (Alpha-Trimmed Mean) a 7 punti.
+ * Scarta il valore minimo e massimo, mediando i 5 rimanenti per evitare spike hardware.
+ */
+static int16_t get_trimmed_mean_7(int16_t *data) {
     int16_t temp[MEDIAN_WINDOW];
     memcpy(temp, data, MEDIAN_WINDOW * sizeof(int16_t));
+
+    // Ordina l'array dal più piccolo al più grande (Insertion Sort)
     for (uint8_t i = 1; i < MEDIAN_WINDOW; i++) {
         int16_t key = temp[i];
         int8_t j = (int8_t)i - 1;
@@ -103,7 +112,14 @@ static int16_t get_median_7(int16_t *data) {
         }
         temp[j + 1] = key;
     }
-    return temp[3];
+
+    // Somma solo i 5 valori centrali (esclude indice 0 e indice 6)
+    int32_t sum = 0;
+    for (uint8_t i = 1; i < (MEDIAN_WINDOW - 1); i++) {
+        sum += temp[i];
+    }
+
+    return (int16_t)(sum / (MEDIAN_WINDOW - 2));
 }
 
 void processWindWaveform(uint8_t channel, uint8_t direction) {
@@ -133,7 +149,7 @@ void processWindWaveform(uint8_t channel, uint8_t direction) {
     arm_atan2_q15(finalSin, finalCos, &s_signalPhases[channel][direction]);
 }
 
-void calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
+bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
     q18_13 signalPhaseDiffs[6];
     for (uint8_t ch = 0; ch < 6; ch++) {
         signalPhaseDiffs[ch] = normalise_angle((q18_13)s_signalPhases[ch][0] - s_signalPhases[ch][1] - s_calibrationData.phases[ch]);
@@ -192,9 +208,18 @@ void calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
             }
         }
     }
+
+    // Scarto a monte: se la soluzione "migliore" ha un errore geometrico troppo alto,
+    // scartiamo l'intera lettura perché i dati acustici erano troppo degradati.
+    if (best_res > MAX_VALID_RESIDUAL) {
+        return false;
+    }
+
     // Explicit clamp to int16 range to prevent overflow artifacts in output
     *x_cmps = (int16_t)(best_x > 32767 ? 32767 : (best_x < -32768 ? -32768 : best_x));
     *y_cmps = (int16_t)(best_y > 32767 ? 32767 : (best_y < -32768 ? -32768 : best_y));
+
+    return true;
 }
 
 void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
@@ -206,8 +231,9 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
     rawBufferX[medianIdx] = x_cmps; rawBufferY[medianIdx] = y_cmps;
     medianIdx = (medianIdx + 1) % MEDIAN_WINDOW;
 
-    int16_t medX = get_median_7(rawBufferX);
-    int16_t medY = get_median_7(rawBufferY);
+    // Sostituito il filtro mediano con la media troncata a 7 punti
+    int16_t medX = get_trimmed_mean_7(rawBufferX);
+    int16_t medY = get_trimmed_mean_7(rawBufferY);
 
     if (bufferFull) {
         int16_t dX = medX - lastFilteredX, dY = medY - lastFilteredY;

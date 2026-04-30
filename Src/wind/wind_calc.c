@@ -526,7 +526,19 @@ bool end_wake_calibration(void) {
     if (!fit) { s_isWakeCalibrating = false; return false; }
     s_wakeCalib.A_q15 = (int16_t)((A_s / (float)fit) * 32768.0f);
     s_wakeCalib.sigma_deg10 = (int16_t)((sig_s / (float)fit) * 10.0f);
-    storeWakeCalibration(); s_isWakeCalibrating = false; return true;
+
+    // Ora la funzione che mancava viene richiamata correttamente qui!
+    storeWakeCalibration();
+    s_isWakeCalibrating = false; return true;
+}
+
+// ECCO LA FUNZIONE CHE MANCAVA!
+void storeWakeCalibration(void) {
+    // 1. Calcola il codice di sicurezza (CRC) escludendo l'ultimo byte che conterrà il CRC stesso
+    s_wakeCalib.crc = crc8_dallas(&s_wakeCalib, sizeof(s_wakeCalib) - 1, 0xEE);
+
+    // 2. Scrive i dati in modo permanente nella memoria EEPROM all'indirizzo WAKE_CALIB_ADDRESS
+    WriteEEPROM(WAKE_CALIB_ADDRESS, &s_wakeCalib, sizeof(s_wakeCalib));
 }
 
 void recallWakeCalibration(void) {
@@ -545,4 +557,28 @@ void WriteEEPROM(uint16_t addr, void *data, uint16_t len) {
 
 void readEEPROM(uint16_t addr, void *data, uint16_t len) {
     memcpy(data, (void*)(FLASH_EEPROM_BASE + addr), len);
+}
+
+/* ============================================================
+ * BACKGROUND MAINTENANCE
+ * ============================================================ */
+
+/**
+ * @brief Manages the continuous self-learning of the aerodynamic wake.
+ * To be called regularly after sampling.
+ */
+void wind_calc_background_task(void) {
+    // If we are not already collecting data for the wake and the station is not
+    // in the zero calibration phase (CAL button), start background collection.
+    if (!s_isWakeCalibrating && !s_isCalibrating) {
+        begin_wake_calibration();
+    }
+
+    // Attempts to calculate the wake. If it has collected enough wind from all
+    // directions, end_wake_calibration() will save to EEPROM and return true.
+    if (s_isWakeCalibrating && end_wake_calibration()) {
+        // Calibration was successful and has been saved.
+        // Immediately restart the counters to begin studying the next cycle.
+        begin_wake_calibration();
+    }
 }

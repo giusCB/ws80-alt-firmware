@@ -3,6 +3,7 @@
  * @brief Professional Ultrasonic Wind Calculation Module - Industrial Hurricane Grade
  * Final Implementation: 32-bit/64-bit path, trimmed-mean filtering, early rejection,
  * unified physics, safe EEPROM fallbacks, and deterministic math.
+ * * FIX: Strut bins aligned to 45°, 135°, 225°, 315° (Bins 4, 13, 22, 31)
  */
 
 #include "wind_calc.h"
@@ -28,25 +29,25 @@ typedef int32_t q18_13, q17_14;
 
 /* Wake Correction Constants */
 #define KAIMAL_A_K          0.1029f
-#define KAIMAL_THETA_MAX    70.0f    
+#define KAIMAL_THETA_MAX    70.0f
 
 #define WAKE_DEFAULT_A          0.08f
 #define WAKE_DEFAULT_SIGMA_DEG  17.0f
-#define WAKE_A_Q15_DEFAULT      ((int16_t)(WAKE_DEFAULT_A * 32768.0f))       
-#define WAKE_SIGMA_DEG10_DEFAULT ((int16_t)(WAKE_DEFAULT_SIGMA_DEG * 10.0f)) 
+#define WAKE_A_Q15_DEFAULT      ((int16_t)(WAKE_DEFAULT_A * 32768.0f))
+#define WAKE_SIGMA_DEG10_DEFAULT ((int16_t)(WAKE_DEFAULT_SIGMA_DEG * 10.0f))
 
 #define WAKE_CORRECTION_MAX     1.5f
 #define WAKE_CORRECTION_MIN     1.0f
 
 /* EEPROM addresses */
-#define PHASE_CALIB_ADDRESS     0xA4   
-#define WAKE_CALIB_ADDRESS      0xB4   
+#define PHASE_CALIB_ADDRESS     0xA4
+#define WAKE_CALIB_ADDRESS      0xB4
 
 /* Wake calibration binning */
-#define WAKE_BINS               36     
-#define WAKE_CAL_MIN_PER_BIN    20     
-#define WAKE_CAL_MIN_COVERAGE   30     
-#define WAKE_CAL_MIN_SPEED      100    
+#define WAKE_BINS               36
+#define WAKE_CAL_MIN_PER_BIN    20
+#define WAKE_CAL_MIN_COVERAGE   30
+#define WAKE_CAL_MIN_SPEED      100
 
 /* --- 3. STATIC VARIABLES & STATE --- */
 static int16_t rawBufferX[MEDIAN_WINDOW];
@@ -80,15 +81,15 @@ q18_13 s_calibrationPhaseSums[6];
 
 /* Wake calibration */
 struct __attribute__((packed, aligned(2))) wakeCalibStruct {
-    int16_t A_q15;          
-    int16_t sigma_deg10;    
+    int16_t A_q15;
+    int16_t sigma_deg10;
     uint8_t crc;
 };
 static struct wakeCalibStruct s_wakeCalib;
 
 static bool     s_isWakeCalibrating = false;
-static uint32_t s_wakeSumSpeed[WAKE_BINS];  
-static uint16_t s_wakeCntBin[WAKE_BINS];    
+static uint32_t s_wakeSumSpeed[WAKE_BINS];
+static uint16_t s_wakeCntBin[WAKE_BINS];
 
 /* --- 4. PROTOTYPES --- */
 uint32_t FastIntSqrt(uint32_t value);
@@ -162,14 +163,29 @@ q1_14 s_tangentVectors[6][2] = {
 };
 
 /* ============================================================
+ * MODULE INITIALIZATION
+ * ============================================================ */
+
+void wind_calc_init(void) {
+    firstSampleReceived = false;
+    bufferFull          = false;
+    medianIdx           = 0;
+
+    spdSum = spdSumCnt = dirVectorSumCnt = 0;
+    dirVectorSumX = dirVectorSumY = maxSpd = 0;
+
+    recallCalibration();
+    recallWakeCalibration();
+}
+
+/* ============================================================
  * LAYER 1+2: WAKE CORRECTION
  * ============================================================ */
 static void apply_wake_correction(int16_t *x, int16_t *y)
 {
     if (*x == 0 && *y == 0) return;
 
-    /* SAFEGUARD: Prevent division by zero if EEPROM is corrupted or uninitialized.
-       Sigma must be at least 5.0 degrees (50). Amplitude must be positive. */
+    /* SAFEGUARD: Default values in case of corruption */
     if (s_wakeCalib.sigma_deg10 < 50 || s_wakeCalib.A_q15 <= 0) {
         s_wakeCalib.sigma_deg10 = WAKE_SIGMA_DEG10_DEFAULT;
         s_wakeCalib.A_q15       = WAKE_A_Q15_DEFAULT;
@@ -180,12 +196,11 @@ static void apply_wake_correction(int16_t *x, int16_t *y)
     float mag = sqrtf(fx * fx + fy * fy);
     if (mag < 1.0f) return;
 
-    /* Wind direction in degrees [0, 360) */
     float wind_deg = atan2f(fy, fx) * (180.0f / (float)M_PI);
     if (wind_deg < 0.0f) wind_deg += 360.0f;
 
-    /* LAYER 1: Kaimal (1979) Transducer Shadow Correction */
-    const float path_axes_deg[4] = { 45.0f, 135.0f, 90.0f, 0.0f };
+    /* LAYER 1: Kaimal (Transducers at 0, 90, 180, 270) */
+    const float path_axes_deg[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
     float kaimal_attenuation = 0.0f;
 
     for (int p = 0; p < 4; p++) {
@@ -199,12 +214,12 @@ static void apply_wake_correction(int16_t *x, int16_t *y)
     }
     float k_kaimal = 1.0f / (1.0f - kaimal_attenuation / 4.0f);
 
-    /* LAYER 2: Wyngaard & Zhang (1985) Structural Wake Correction */
+    /* LAYER 2: Wyngaard (Struts at 45, 135, 225, 315) */
     float A     = (float)s_wakeCalib.A_q15    / 32768.0f;
     float sigma = (float)s_wakeCalib.sigma_deg10 / 10.0f;
     float two_sigma_sq = 2.0f * sigma * sigma;
 
-    const float strut_dirs[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
+    const float strut_dirs[4] = { 45.0f, 135.0f, 225.0f, 315.0f };
     float gauss_sum = 0.0f;
 
     for (int s = 0; s < 4; s++) {
@@ -218,14 +233,11 @@ static void apply_wake_correction(int16_t *x, int16_t *y)
     if (denominator < 0.5f) denominator = 0.5f;
     float k_gaussian = 1.0f / denominator;
 
-    /* COMBINED CORRECTION */
     float correction = k_kaimal * k_gaussian;
-
     if (correction < WAKE_CORRECTION_MIN) correction = WAKE_CORRECTION_MIN;
     if (correction > WAKE_CORRECTION_MAX) correction = WAKE_CORRECTION_MAX;
 
     float new_mag = mag * correction;
-
     *x = (int16_t)(fx / mag * new_mag);
     *y = (int16_t)(fy / mag * new_mag);
 }
@@ -274,8 +286,7 @@ void processWindWaveform(uint8_t channel, uint8_t direction) {
         finalCos = safe_scale_to_q15(cosSum, shift);
         finalSin = safe_scale_to_q15(sinSum, shift);
     }
-    g_signalPowers[channel][direction] =
-        (uint32_t)((int32_t)finalCos * finalCos + (int32_t)finalSin * finalSin);
+    g_signalPowers[channel][direction] = (uint32_t)((int32_t)finalCos * finalCos + (int32_t)finalSin * finalSin);
     arm_atan2_q15(finalSin, finalCos, &s_signalPhases[channel][direction]);
 }
 
@@ -285,7 +296,6 @@ bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
         signalPhaseDiffs[ch] = normalise_angle((q18_13)s_signalPhases[ch][0] - s_signalPhases[ch][1] - s_calibrationData.phases[ch]);
     }
 
-    /* Use unified physics formula */
     int32_t vs_sq = get_vs_squared();
     int32_t k_short = vs_sq / 16000;
     int32_t k_long  = vs_sq / 35700;
@@ -297,13 +307,10 @@ bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
         for (int8_t ch3W = -3; ch3W <= 3; ch3W++) {
             for (int8_t ch04W = -1; ch04W <= 1; ch04W++) {
                 for (int8_t ch15W = -1; ch15W <= 1; ch15W++) {
-
                     int32_t sum_x = 0, sum_y = 0;
                     int32_t current_rV[6][2];
-
                     for (uint8_t ch = 0; ch < 6; ch++) {
                         q18_13 pD = signalPhaseDiffs[ch];
-
                         if (ch == 2) pD += (q18_13)2 * qn_13_pi * ch2W;
                         else if (ch == 3) pD += (q18_13)2 * qn_13_pi * ch3W;
                         else if (ch == 0 || ch == 4) pD += (q18_13)2 * qn_13_pi * ch04W;
@@ -311,21 +318,14 @@ bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
 
                         int32_t delay_ns = (pD * 3900) >> 13;
                         int32_t k = (ch == 2 || ch == 3) ? k_long : k_short;
-
                         int32_t spd = (int32_t)(((int64_t)k * delay_ns) / 2000);
-
                         int32_t rV_x = (spd * s_radiusVectors[ch][0]) >> 14;
                         int32_t rV_y = (spd * s_radiusVectors[ch][1]) >> 14;
-
-                        current_rV[ch][0] = rV_x;
-                        current_rV[ch][1] = rV_y;
+                        current_rV[ch][0] = rV_x; current_rV[ch][1] = rV_y;
                         sum_x += rV_x; sum_y += rV_y;
                     }
-
-                    int32_t bX = sum_x / 3;
-                    int32_t bY = sum_y / 3;
+                    int32_t bX = sum_x / 3; int32_t bY = sum_y / 3;
                     uint32_t res = 0;
-
                     for (uint8_t ch = 0; ch < 6; ch++) {
                         int32_t dx = bX - current_rV[ch][0];
                         int32_t dy = bY - current_rV[ch][1];
@@ -333,44 +333,27 @@ bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps) {
                         int64_t diff = (int64_t)dx * dx + (int64_t)dy * dy - (dot_t * dot_t);
                         if (diff < 0) diff = 0;
                         res += (uint32_t)(diff >> 2);
-                        
-                        /* Early rejection: CPU safeguard against impossible wraps */
-                        if (res > best_res) break; 
+                        if (res > best_res) break;
                     }
-
-                    if (res < best_res) {
-                        best_res = res;
-                        best_x = bX;
-                        best_y = bY;
-                    }
+                    if (res < best_res) { best_res = res; best_x = bX; best_y = bY; }
                 }
             }
         }
     }
 
-    if (best_res > MAX_VALID_RESIDUAL) {
-        return false;
-    }
-
+    if (best_res > MAX_VALID_RESIDUAL) return false;
     *x_cmps = (int16_t)(best_x > 32767 ? 32767 : (best_x < -32768 ? -32768 : best_x));
     *y_cmps = (int16_t)(best_y > 32767 ? 32767 : (best_y < -32768 ? -32768 : best_y));
-
     return true;
 }
 
 void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
     if (!firstSampleReceived) {
-        for (int i = 0; i < MEDIAN_WINDOW; i++) {
-            rawBufferX[i] = x_cmps;
-            rawBufferY[i] = y_cmps;
-        }
-        lastFilteredX      = x_cmps;
-        lastFilteredY      = y_cmps;
-        firstSampleReceived = true;
-        bufferFull          = true;
+        for (int i = 0; i < MEDIAN_WINDOW; i++) { rawBufferX[i] = x_cmps; rawBufferY[i] = y_cmps; }
+        lastFilteredX = x_cmps; lastFilteredY = y_cmps;
+        firstSampleReceived = true; bufferFull = true;
     }
-    rawBufferX[medianIdx] = x_cmps;
-    rawBufferY[medianIdx] = y_cmps;
+    rawBufferX[medianIdx] = x_cmps; rawBufferY[medianIdx] = y_cmps;
     medianIdx = (medianIdx + 1) % MEDIAN_WINDOW;
 
     int16_t medX = get_trimmed_mean_7(rawBufferX);
@@ -378,30 +361,21 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
 
     if (bufferFull) {
         int16_t dX = medX - lastFilteredX, dY = medY - lastFilteredY;
-        if (abs(dX) > MAX_ACCEL_CMPS)
-            medX = lastFilteredX + (dX > 0 ? MAX_ACCEL_CMPS : -MAX_ACCEL_CMPS);
-        if (abs(dY) > MAX_ACCEL_CMPS)
-            medY = lastFilteredY + (dY > 0 ? MAX_ACCEL_CMPS : -MAX_ACCEL_CMPS);
+        if (abs(dX) > MAX_ACCEL_CMPS) medX = lastFilteredX + (dX > 0 ? MAX_ACCEL_CMPS : -MAX_ACCEL_CMPS);
+        if (abs(dY) > MAX_ACCEL_CMPS) medY = lastFilteredY + (dY > 0 ? MAX_ACCEL_CMPS : -MAX_ACCEL_CMPS);
     }
-    lastFilteredX = medX;
-    lastFilteredY = medY;
-
+    lastFilteredX = medX; lastFilteredY = medY;
     apply_wake_correction(&medX, &medY);
-
-    lastSampleX = medX;
-    lastSampleY = medY;
+    lastSampleX = medX; lastSampleY = medY;
 
     if (s_isWakeCalibrating) {
-        int16_t raw_x = lastFilteredX;
-        int16_t raw_y = lastFilteredY;
-        uint32_t spd = FastIntSqrt((uint32_t)((int32_t)raw_x * raw_x + (int32_t)raw_y * raw_y));
-        
+        int16_t rX = lastFilteredX; int16_t rY = lastFilteredY;
+        uint32_t spd = FastIntSqrt((uint32_t)((int32_t)rX * rX + (int32_t)rY * rY));
         if (spd >= WAKE_CAL_MIN_SPEED) {
-            float dir_deg = atan2f((float)raw_y, (float)raw_x) * (180.0f / (float)M_PI);
-            if (dir_deg < 0.0f) dir_deg += 360.0f;
-            uint8_t bin = (uint8_t)(dir_deg / 10.0f) % WAKE_BINS;
-            s_wakeSumSpeed[bin] += spd;
-            s_wakeCntBin[bin]++;
+            float dir = atan2f((float)rY, (float)rX) * (180.0f / (float)M_PI);
+            if (dir < 0.0f) dir += 360.0f;
+            uint8_t bin = (uint8_t)(dir / 10.0f) % WAKE_BINS;
+            s_wakeSumSpeed[bin] += spd; s_wakeCntBin[bin]++;
         }
     }
 
@@ -409,37 +383,31 @@ void store_wind_sample(int16_t x_cmps, int16_t y_cmps) {
     spdVectorSumX += (int32_t)medX; spdVectorSumY += (int32_t)medY; spdVectorSumCnt++;
 
     if (spdVectorSumCnt >= VectorSumSize) {
-        int32_t avgX = spdVectorSumX / (int32_t)spdVectorSumCnt;
-        int32_t avgY = spdVectorSumY / (int32_t)spdVectorSumCnt;
-        
-        /* 64-bit integer square root per calcoli sicuri senza perdita di dati */
-        uint16_t spd = (uint16_t)FastIntSqrt64((uint64_t)((int64_t)avgX * avgX + (int64_t)avgY * avgY));
-        
-        spdSum += (uint32_t)spd;
-        if (spd > maxSpd) maxSpd = spd;
-        spdSumCnt++;
-        spdVectorSumX = spdVectorSumY = spdVectorSumCnt = 0;
+        int32_t aX = spdVectorSumX / (int32_t)spdVectorSumCnt;
+        int32_t aY = spdVectorSumY / (int32_t)spdVectorSumCnt;
+        uint16_t spd = (uint16_t)FastIntSqrt64((uint64_t)((int64_t)aX * aX + (int64_t)aY * aY));
+        spdSum += (uint32_t)spd; if (spd > maxSpd) maxSpd = spd;
+        spdSumCnt++; spdVectorSumX = spdVectorSumY = spdVectorSumCnt = 0;
     }
 }
 
 void get_wind_parameters(uint16_t *pAvg_dmps, uint16_t *pGust_dmps, uint16_t *pAngle_deg) {
-    *pAvg_dmps  = (spdSumCnt > 0)
-                  ? (uint16_t)((spdSum + (spdSumCnt * 5)) / (spdSumCnt * 10))
-                  : 0;
+    *pAvg_dmps  = (spdSumCnt > 0) ? (uint16_t)((spdSum + (spdSumCnt * 5)) / (spdSumCnt * 10)) : 0;
     *pGust_dmps = (uint16_t)(maxSpd / 10);
-
     if (dirVectorSumCnt > 0 && (dirVectorSumX != 0 || dirVectorSumY != 0)) {
-        int32_t avgX  = dirVectorSumX / (int32_t)dirVectorSumCnt;
-        int32_t avgY  = dirVectorSumY / (int32_t)dirVectorSumCnt;
-        uint32_t maxV = (uint32_t)(abs(avgX) > abs(avgY) ? abs(avgX) : abs(avgY));
-        int8_t shift  = (int8_t)__builtin_clz(maxV) - 17;
-        q15_t fY = safe_scale_to_q15(avgY, shift);
-        q15_t fX = safe_scale_to_q15(avgX, shift);
-        q15_t angleQ;
-        arm_atan2_q15(fY, fX, &angleQ);
+        int32_t aX = dirVectorSumX / (int32_t)dirVectorSumCnt;
+        int32_t aY = dirVectorSumY / (int32_t)dirVectorSumCnt;
+        uint32_t maxV = (uint32_t)(abs(aX) > abs(aY) ? abs(aX) : abs(aY));
+        int8_t shift = (int8_t)__builtin_clz(maxV) - 17;
+        q15_t fY = safe_scale_to_q15(aY, shift); q15_t fX = safe_scale_to_q15(aX, shift);
+        q15_t angleQ; arm_atan2_q15(fY, fX, &angleQ);
         int32_t deg = (int32_t)(angleQ * 3667 + (1 << 18)) >> 19;
-        while (deg < 0) deg += 360;
+
+        while (deg < 0) {
+            deg += 360;
+        }
         *pAngle_deg = (uint16_t)(deg % 360);
+
     } else {
         *pAngle_deg = 0;
     }
@@ -448,35 +416,25 @@ void get_wind_parameters(uint16_t *pAvg_dmps, uint16_t *pGust_dmps, uint16_t *pA
     dirVectorSumX = dirVectorSumY = maxSpd = 0;
 }
 
-/* Use unified physics formula */
-int32_t get_speed_cmps_32(uint8_t channel, int32_t timeDiff_ns) {
+int32_t get_speed_cmps_32(uint8_t ch, int32_t dt_ns) {
     int32_t vs_sq = get_vs_squared();
-    int32_t L     = (channel == 2 || channel == 3) ? 35700 : 16000;
-    return (int32_t)(((int64_t)vs_sq / L) * timeDiff_ns / 2000);
+    int32_t L = (ch == 2 || ch == 3) ? 35700 : 16000;
+    return (int32_t)(((int64_t)vs_sq / L) * dt_ns / 2000);
 }
 
-uint32_t FastIntSqrt(uint32_t value) {
-    if (!value) return 0;
-    uint32_t xn = 1u << ((32 - __CLZ(value)) / 2);
-    xn = (xn + value / xn) / 2;
-    xn = (xn + value / xn) / 2;
-    xn = (xn + value / xn) / 2;
+uint32_t FastIntSqrt(uint32_t val) {
+    if (!val) return 0;
+    uint32_t xn = 1u << ((32 - __CLZ(val)) / 2);
+    xn = (xn + val / xn) / 2; xn = (xn + val / xn) / 2; xn = (xn + val / xn) / 2;
     return xn;
 }
 
-/** * @brief Rock-solid binary numeral system square root for 64-bit integers.
- * Immune to overflow and precision loss. 
- */
-uint32_t FastIntSqrt64(uint64_t value) {
-    uint64_t res = 0;
-    uint64_t bit = 1ULL << 62; 
-
-    while (bit > value) {
-        bit >>= 2;
-    }
+uint32_t FastIntSqrt64(uint64_t val) {
+    uint64_t res = 0; uint64_t bit = 1ULL << 62;
+    while (bit > val) bit >>= 2;
     while (bit != 0) {
-        if (value >= res + bit) {
-            value -= res + bit;
+        if (val >= res + bit) {
+            val -= res + bit;
             res = (res >> 1) + bit;
         } else {
             res >>= 1;
@@ -487,7 +445,7 @@ uint32_t FastIntSqrt64(uint64_t value) {
 }
 
 /* ============================================================
- * PHASE CALIBRATION (existing, unchanged)
+ * CALIBRATION ROUTINES (Phase & Wake)
  * ============================================================ */
 
 void begin_calibration(void) {
@@ -498,17 +456,19 @@ void begin_calibration(void) {
 
 void store_calibration_sample(void) {
     if (!s_isCalibrating) return;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 6; i++) {
         s_calibrationPhaseSums[i] += normalise_angle(
             s_signalPhases[i][0] - s_signalPhases[i][1]);
+    }
     s_calibrationCount++;
 }
 
 bool maybe_end_calibration(void) {
     if (!s_isCalibrating || s_calibrationCount < 200) return false;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 6; i++) {
         s_calibrationData.phases[i] =
             (int16_t)(s_calibrationPhaseSums[i] / (int32_t)s_calibrationCount);
+    }
     storeCalibration();
     s_isCalibrating    = false;
     s_calibrationCount = 0;
@@ -516,148 +476,73 @@ bool maybe_end_calibration(void) {
 }
 
 void storeCalibration(void) {
-    s_calibrationData.crc =
-        crc8_dallas(&s_calibrationData, sizeof(s_calibrationData) - 1, 0xEE);
+    s_calibrationData.crc = crc8_dallas(&s_calibrationData, sizeof(s_calibrationData) - 1, 0xEE);
     WriteEEPROM(calibrationAddress, &s_calibrationData, sizeof(s_calibrationData));
 }
 
 void recallCalibration(void) {
     readEEPROM(calibrationAddress, &s_calibrationData, sizeof(s_calibrationData));
-    if (crc8_dallas(&s_calibrationData, sizeof(s_calibrationData), 0xEE) != 0)
-        memset(&s_calibrationData, 0, sizeof(s_calibrationData));
+    if (crc8_dallas(&s_calibrationData, sizeof(s_calibrationData), 0xEE) != 0) memset(&s_calibrationData, 0, sizeof(s_calibrationData));
 }
-
-/* ============================================================
- * WAKE CALIBRATION SYSTEM
- * ============================================================ */
 
 void begin_wake_calibration(void) {
     memset(s_wakeSumSpeed, 0, sizeof(s_wakeSumSpeed));
-    memset(s_wakeCntBin,   0, sizeof(s_wakeCntBin));
+    memset(s_wakeCntBin, 0, sizeof(s_wakeCntBin));
     s_isWakeCalibrating = true;
 }
 
 bool end_wake_calibration(void) {
-    uint8_t valid_bins = 0;
-    float bin_avg[WAKE_BINS];
-    float global_sum = 0.0f;
-
+    uint8_t valid = 0; float bin_avg[WAKE_BINS]; float g_sum = 0.0f;
     for (int b = 0; b < WAKE_BINS; b++) {
         if (s_wakeCntBin[b] >= WAKE_CAL_MIN_PER_BIN) {
             bin_avg[b] = (float)s_wakeSumSpeed[b] / (float)s_wakeCntBin[b];
-            global_sum += bin_avg[b];
-            valid_bins++;
-        } else {
-            bin_avg[b] = -1.0f; 
-        }
+            g_sum += bin_avg[b]; valid++;
+        } else bin_avg[b] = -1.0f;
     }
+    if (valid < WAKE_CAL_MIN_COVERAGE) { s_isWakeCalibrating = false; return false; }
+    float g_mean = g_sum / (float)valid;
 
-    if (valid_bins < WAKE_CAL_MIN_COVERAGE) {
-        s_isWakeCalibrating = false;
-        return false;
-    }
-
-    float global_mean = global_sum / (float)valid_bins;
-
-    const int strut_bins[4] = { 0, 9, 18, 27 }; 
-    float A_sum     = 0.0f;
-    float sigma_sum = 0.0f;
-    uint8_t fit_ok  = 0;
+    /* FIXED: Strut bins mapped to diagonals 45, 135, 225, 315 */
+    const int strut_bins[4] = { 4, 13, 22, 31 };
+    float A_s = 0.0f; float sig_s = 0.0f; uint8_t fit = 0;
 
     for (int s = 0; s < 4; s++) {
-        float min_speed = 1e9f;
-        int   min_bin   = -1;
+        float m_spd = 1e9f; int m_bin = -1;
         for (int db = -2; db <= 2; db++) {
             int b = (strut_bins[s] + db + WAKE_BINS) % WAKE_BINS;
-            if (bin_avg[b] > 0 && bin_avg[b] < min_speed) {
-                min_speed = bin_avg[b];
-                min_bin   = b;
-            }
+            if (bin_avg[b] > 0 && bin_avg[b] < m_spd) { m_spd = bin_avg[b]; m_bin = b; }
         }
-        if (min_bin < 0) continue;
-
-        float A = (global_mean - min_speed) / global_mean;
+        if (m_bin < 0) continue;
+        float A = (g_mean - m_spd) / g_mean;
         if (A < 0.02f || A > 0.25f) continue;
-
-        float half_att_speed = min_speed + (global_mean - min_speed) * 0.5f;
-        float sigma_est = 0.0f;
-
+        float h_att = m_spd + (g_mean - m_spd) * 0.5f; float s_est = 0.0f;
         for (int db = 1; db <= 5; db++) {
-            int b_pos = (min_bin + db) % WAKE_BINS;
-            int b_neg = (min_bin - db + WAKE_BINS) % WAKE_BINS;
-            bool pos_ok = (bin_avg[b_pos] >= 0 && bin_avg[b_pos] >= half_att_speed);
-            bool neg_ok = (bin_avg[b_neg] >= 0 && bin_avg[b_neg] >= half_att_speed);
-            if (pos_ok || neg_ok) {
-                sigma_est = (float)(db * 10) / 2.355f;
-                break;
-            }
+            int b_p = (m_bin + db) % WAKE_BINS; int b_n = (m_bin - db + WAKE_BINS) % WAKE_BINS;
+            if ((bin_avg[b_p] >= h_att) || (bin_avg[b_n] >= h_att)) { s_est = (float)(db * 10) / 2.355f; break; }
         }
-
-        if (sigma_est < 5.0f || sigma_est > 35.0f) {
-            sigma_est = WAKE_DEFAULT_SIGMA_DEG; 
-        }
-
-        A_sum     += A;
-        sigma_sum += sigma_est;
-        fit_ok++;
+        if (s_est < 5.0f || s_est > 35.0f) s_est = WAKE_DEFAULT_SIGMA_DEG;
+        A_s += A; sig_s += s_est; fit++;
     }
-
-    if (fit_ok == 0) {
-        s_isWakeCalibrating = false;
-        return false;
-    }
-
-    float A_fit     = A_sum     / (float)fit_ok;
-    float sigma_fit = sigma_sum / (float)fit_ok;
-
-    if (A_fit     < 0.02f) A_fit     = 0.02f;
-    if (A_fit     > 0.25f) A_fit     = 0.25f;
-    if (sigma_fit < 5.0f)  sigma_fit = 5.0f;
-    if (sigma_fit > 35.0f) sigma_fit = 35.0f;
-
-    s_wakeCalib.A_q15       = (int16_t)(A_fit     * 32768.0f);
-    s_wakeCalib.sigma_deg10 = (int16_t)(sigma_fit * 10.0f);
-    storeWakeCalibration();
-
-    s_isWakeCalibrating = false;
-    return true;
-}
-
-bool is_wake_calibrating(void) {
-    return s_isWakeCalibrating;
-}
-
-uint16_t get_wake_cal_progress(uint8_t bin) {
-    if (bin >= WAKE_BINS) return 0;
-    return s_wakeCntBin[bin];
-}
-
-void storeWakeCalibration(void) {
-    s_wakeCalib.crc = crc8_dallas(&s_wakeCalib, sizeof(s_wakeCalib) - 1, 0xEE);
-    WriteEEPROM(WAKE_CALIB_ADDRESS, &s_wakeCalib, sizeof(s_wakeCalib));
+    if (!fit) { s_isWakeCalibrating = false; return false; }
+    s_wakeCalib.A_q15 = (int16_t)((A_s / (float)fit) * 32768.0f);
+    s_wakeCalib.sigma_deg10 = (int16_t)((sig_s / (float)fit) * 10.0f);
+    storeWakeCalibration(); s_isWakeCalibrating = false; return true;
 }
 
 void recallWakeCalibration(void) {
     readEEPROM(WAKE_CALIB_ADDRESS, &s_wakeCalib, sizeof(s_wakeCalib));
     if (crc8_dallas(&s_wakeCalib, sizeof(s_wakeCalib), 0xEE) != 0) {
-        s_wakeCalib.A_q15       = WAKE_A_Q15_DEFAULT;      
-        s_wakeCalib.sigma_deg10 = WAKE_SIGMA_DEG10_DEFAULT; 
+        s_wakeCalib.A_q15 = WAKE_A_Q15_DEFAULT; s_wakeCalib.sigma_deg10 = WAKE_SIGMA_DEG10_DEFAULT;
     }
 }
 
-/* ============================================================
- * EEPROM READ / WRITE
- * ============================================================ */
-
-void WriteEEPROM(uint16_t biasAddress, void *data, uint16_t len) {
+void WriteEEPROM(uint16_t addr, void *data, uint16_t len) {
     HAL_FLASHEx_DATAEEPROM_Unlock();
-    uint8_t *p    = (uint8_t *)data;
-    uint32_t addr = FLASH_EEPROM_BASE + biasAddress;
-    for (uint16_t i = 0; i < len; i++)
-        HAL_FLASHEx_DATAEEPROM_Program(FLASH_TYPEPROGRAMDATA_BYTE, addr + i, p[i]);
+    uint8_t *p = (uint8_t*)data; uint32_t base = FLASH_EEPROM_BASE + addr;
+    for (uint16_t i = 0; i < len; i++) HAL_FLASHEx_DATAEEPROM_Program(FLASH_TYPEPROGRAMDATA_BYTE, base + i, p[i]);
     HAL_FLASHEx_DATAEEPROM_Lock();
 }
 
-void readEEPROM(uint16_t biasAddress, void *data, uint16_t len) {
-    memcpy(data, (void *)(FLASH_EEPROM_BASE + biasAddress), len);
+void readEEPROM(uint16_t addr, void *data, uint16_t len) {
+    memcpy(data, (void*)(FLASH_EEPROM_BASE + addr), len);
 }

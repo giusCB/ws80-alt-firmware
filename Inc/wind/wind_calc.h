@@ -5,6 +5,14 @@
 #include <stdbool.h> // Required to use the 'bool' data type
 #include "wind.h"
 
+/* --- MODULE INITIALIZATION & BACKGROUND TASKS --- */
+// Inizializza il modulo e carica i dati dalla EEPROM al boot
+void wind_calc_init(void);
+
+// Task continuo per l'auto-apprendimento della scia aerodinamica
+void wind_calc_background_task(void);
+
+
 /* --- WIND FUNCTION DECLARATIONS --- */
 
 // Processes wind waveform data for a specific channel and direction
@@ -16,17 +24,23 @@ bool calculate_wind(int16_t *x_cmps, int16_t *y_cmps);
 // Stores a filtered wind sample
 void store_wind_sample(int16_t x_cmps, int16_t y_cmps);
 
-// Retrieves calculated parameters (currently commented out in your original code)
-// void get_wind_parameters(uint16_t* pAvg_dmps, uint16_t* pGust_dmps, uint16_t* pAngle_deg);
+// Retrieves calculated parameters (Scommentata, ora è attiva nel .c)
+void get_wind_parameters(uint16_t *pAvg_dmps, uint16_t *pGust_dmps, uint16_t *pAngle_deg);
 
 // Prints debug data to the serial interface
-void print_wind_calc_debug();
+void print_wind_calc_debug(void);
 
-/* --- CALIBRATION FUNCTION DECLARATIONS --- */
 
-void begin_calibration();
-void store_calibration_sample();
-bool maybe_end_calibration();
-void recallCalibration();
+/* --- PHASE CALIBRATION FUNCTION DECLARATIONS (Tasto CAL) --- */
+void begin_calibration(void);
+void store_calibration_sample(void);
+bool maybe_end_calibration(void);
+void recallCalibration(void);
+
+
+/* --- WAKE CALIBRATION FUNCTION DECLARATIONS (Aerodinamica) --- */
+void begin_wake_calibration(void);
+bool end_wake_calibration(void);
+void recallWakeCalibration(void);
 
 #endif // WIND_CALC_H
